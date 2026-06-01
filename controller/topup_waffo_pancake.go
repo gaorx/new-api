@@ -18,10 +18,12 @@ import (
 	"github.com/thanhpk/randstr"
 )
 
+// WaffoPancakePayRequest 表示 Waffo Pancake 充值支付请求体。
 type WaffoPancakePayRequest struct {
 	Amount int64 `json:"amount"`
 }
 
+// RequestWaffoPancakeAmount 计算 Waffo Pancake 充值金额。
 func RequestWaffoPancakeAmount(c *gin.Context) {
 	var req WaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -50,6 +52,7 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": fmt.Sprintf("%.2f", payMoney)})
 }
 
+// getWaffoPancakePayMoney 根据充值额度和分组计算 Waffo Pancake 支付金额。
 func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -74,6 +77,7 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	return payMoney.InexactFloat64()
 }
 
+// normalizeWaffoPancakeTopUpAmount 规范化 Waffo Pancake 充值额度。
 func normalizeWaffoPancakeTopUpAmount(amount int64) int64 {
 	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
 		return amount
@@ -88,10 +92,12 @@ func normalizeWaffoPancakeTopUpAmount(amount int64) int64 {
 	return normalized
 }
 
+// formatWaffoPancakeAmount 格式化 Waffo Pancake 金额。
 func formatWaffoPancakeAmount(payMoney float64) string {
 	return decimal.NewFromFloat(payMoney).StringFixed(2)
 }
 
+// getWaffoPancakeBuyerEmail 获取 Waffo Pancake 支付所用邮箱。
 func getWaffoPancakeBuyerEmail(user *model.User) string {
 	if user != nil && strings.TrimSpace(user.Email) != "" {
 		return user.Email
@@ -103,11 +109,13 @@ func getWaffoPancakeBuyerEmail(user *model.User) string {
 // the body and fall back to persisted creds when the body is blank (see
 // resolveWaffoPancakeAdminCreds). Only SaveWaffoPancake writes to OptionMap.
 
+// waffoPancakeCredsRequest 表示管理员凭证请求体。
 type waffoPancakeCredsRequest struct {
 	MerchantID string `json:"merchant_id"`
 	PrivateKey string `json:"private_key"`
 }
 
+// saveWaffoPancakeRequest 表示保存 Waffo Pancake 配置的请求体。
 type saveWaffoPancakeRequest struct {
 	MerchantID string `json:"merchant_id"`
 	PrivateKey string `json:"private_key"`
@@ -116,6 +124,7 @@ type saveWaffoPancakeRequest struct {
 	ProductID  string `json:"product_id"`
 }
 
+// createWaffoPancakePairRequest 表示创建商户配对的请求体。
 type createWaffoPancakePairRequest struct {
 	MerchantID string `json:"merchant_id"`
 	PrivateKey string `json:"private_key"`
@@ -124,6 +133,7 @@ type createWaffoPancakePairRequest struct {
 
 // SaveWaffoPancake atomically persists all five operator-controlled fields.
 // Catalog / pair endpoints are transient — only this one writes the OptionMap.
+// SaveWaffoPancake 保存 Waffo Pancake 配置。
 func SaveWaffoPancake(c *gin.Context) {
 	var req saveWaffoPancakeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -158,6 +168,7 @@ func SaveWaffoPancake(c *gin.Context) {
 // values, for verification) and falls back to persisted creds when the body
 // is blank (so returning admins don't have to re-paste the private key,
 // which is stripped from GET /api/option/).
+// resolveWaffoPancakeAdminCreds 解析管理员提交或系统已存储的 Pancake 凭证。
 func resolveWaffoPancakeAdminCreds(bodyMerchantID, bodyPrivateKey string) (string, string) {
 	m := strings.TrimSpace(bodyMerchantID)
 	k := strings.TrimSpace(bodyPrivateKey)
@@ -170,6 +181,7 @@ func resolveWaffoPancakeAdminCreds(bodyMerchantID, bodyPrivateKey string) (strin
 // CreateWaffoPancakePair mints a Store + OnetimeProduct pair in one round-
 // trip. Surfaces an orphan-store flag when the product half fails so the
 // frontend can preselect / retry without losing context.
+// CreateWaffoPancakePair 创建 Waffo Pancake 商户配对信息。
 func CreateWaffoPancakePair(c *gin.Context) {
 	var req createWaffoPancakePairRequest
 	if c.Request.ContentLength > 0 {
@@ -220,6 +232,7 @@ func CreateWaffoPancakePair(c *gin.Context) {
 // ListWaffoPancakeCatalog returns the merchant's Stores + OnetimeProducts.
 // Doubles as a credential probe (a successful 200 proves the resolved creds
 // authenticate). See resolveWaffoPancakeAdminCreds for credential resolution.
+// ListWaffoPancakeCatalog 获取 Waffo Pancake 商品目录。
 func ListWaffoPancakeCatalog(c *gin.Context) {
 	var req waffoPancakeCredsRequest
 	// An empty body means "use persisted creds"; only fail on malformed JSON.
@@ -245,6 +258,7 @@ func ListWaffoPancakeCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": catalog})
 }
 
+// createWaffoPancakeSubscriptionProductRequest 表示创建 Pancake 订阅商品的请求体。
 type createWaffoPancakeSubscriptionProductRequest struct {
 	Name   string `json:"name"`
 	Amount string `json:"amount"`
@@ -255,6 +269,7 @@ type createWaffoPancakeSubscriptionProductRequest struct {
 // sized to a plan's `name` + `amount`, using persisted Pancake credentials
 // + StoreID. Reads from the form, not the plan row, so newly-typed unsaved
 // plans can mint a product too.
+// CreateWaffoPancakeSubscriptionProduct 创建 Waffo Pancake 订阅商品。
 func CreateWaffoPancakeSubscriptionProduct(c *gin.Context) {
 	var req createWaffoPancakeSubscriptionProductRequest
 	if c.Request.ContentLength > 0 {
@@ -307,6 +322,7 @@ func CreateWaffoPancakeSubscriptionProduct(c *gin.Context) {
 // ListWaffoPancakeSubscriptionProductOptions returns the OnetimeProducts
 // in the saved Pancake store, for the subscription-plan dropdown. The name
 // reflects new-api's plan concept; under the hood it's still OnetimeProducts.
+// ListWaffoPancakeSubscriptionProductOptions 获取 Pancake 订阅商品选项列表。
 func ListWaffoPancakeSubscriptionProductOptions(c *gin.Context) {
 	merchantID, privateKey := resolveWaffoPancakeAdminCreds("", "")
 	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)
@@ -338,6 +354,7 @@ func ListWaffoPancakeSubscriptionProductOptions(c *gin.Context) {
 	})
 }
 
+// getWaffoPancakeBuyerIdentity 获取 Waffo Pancake 支付所用买家标识。
 func getWaffoPancakeBuyerIdentity(user *model.User) string {
 	if user == nil {
 		return ""
@@ -345,6 +362,7 @@ func getWaffoPancakeBuyerIdentity(user *model.User) string {
 	return service.WaffoPancakeBuyerIdentityFromUserID(user.Id)
 }
 
+// RequestWaffoPancakePay 发起 Waffo Pancake 充值支付。
 func RequestWaffoPancakePay(c *gin.Context) {
 	if !isWaffoPancakeTopUpEnabled() {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "Waffo Pancake 配置不完整"})
@@ -431,6 +449,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	})
 }
 
+// WaffoPancakeWebhook 处理 Waffo Pancake Webhook 回调。
 func WaffoPancakeWebhook(c *gin.Context) {
 	if !isWaffoPancakeWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))

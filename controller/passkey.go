@@ -18,6 +18,7 @@ import (
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 )
 
+// PasskeyRegisterBegin 开始当前登录用户的 Passkey 注册流程。
 func PasskeyRegisterBegin(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -82,6 +83,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 	})
 }
 
+// PasskeyRegisterFinish 完成当前登录用户的 Passkey 注册流程。
 func PasskeyRegisterFinish(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -149,6 +151,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 	})
 }
 
+// PasskeyDelete 解绑当前登录用户的 Passkey。
 func PasskeyDelete(c *gin.Context) {
 	user, err := getSessionUser(c)
 	if err != nil {
@@ -174,6 +177,7 @@ func PasskeyDelete(c *gin.Context) {
 	})
 }
 
+// PasskeyStatus 获取当前登录用户的 Passkey 启用状态。
 func PasskeyStatus(c *gin.Context) {
 	user, err := getSessionUser(c)
 	if err != nil {
@@ -212,6 +216,7 @@ func PasskeyStatus(c *gin.Context) {
 	})
 }
 
+// PasskeyLoginBegin 开始基于 Passkey 的无发现登录流程。
 func PasskeyLoginBegin(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -247,6 +252,7 @@ func PasskeyLoginBegin(c *gin.Context) {
 	})
 }
 
+// PasskeyLoginFinish 完成 Passkey 登录，并在成功后建立登录态。
 func PasskeyLoginFinish(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -338,6 +344,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 	return
 }
 
+// AdminResetPasskey 管理员强制重置指定用户的 Passkey 绑定。
 func AdminResetPasskey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -379,6 +386,7 @@ func AdminResetPasskey(c *gin.Context) {
 	})
 }
 
+// PasskeyVerifyBegin 开始当前登录用户的 Passkey 二次安全验证流程。
 func PasskeyVerifyBegin(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -433,6 +441,7 @@ func PasskeyVerifyBegin(c *gin.Context) {
 	})
 }
 
+// PasskeyVerifyFinish 完成当前登录用户的 Passkey 二次安全验证流程。
 func PasskeyVerifyFinish(c *gin.Context) {
 	if !system_setting.GetPasskeySettings().Enabled {
 		c.JSON(http.StatusOK, gin.H{
@@ -503,6 +512,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 	})
 }
 
+// getSessionUser 从当前 session 中解析出登录用户对象。
 func getSessionUser(c *gin.Context) (*model.User, error) {
 	session := sessions.Default(c)
 	idRaw := session.Get("id")
@@ -523,6 +533,7 @@ func getSessionUser(c *gin.Context) (*model.User, error) {
 	return user, nil
 }
 
+// requirePasskeyRegistrationVerification 校验当前用户是否满足 Passkey 注册前的安全验证要求。
 func requirePasskeyRegistrationVerification(c *gin.Context, userID int) bool {
 	twoFA, err := model.GetTwoFAByUserId(userID)
 	if err != nil {
@@ -535,6 +546,7 @@ func requirePasskeyRegistrationVerification(c *gin.Context, userID int) bool {
 	return requireSecureVerificationMethod(c, secureVerificationMethod2FA)
 }
 
+// requirePasskeyDeleteVerification 校验当前用户是否满足 Passkey 删除前的安全验证要求。
 func requirePasskeyDeleteVerification(c *gin.Context, userID int) bool {
 	twoFA, err := model.GetTwoFAByUserId(userID)
 	if err != nil {
@@ -561,6 +573,7 @@ func requirePasskeyDeleteVerification(c *gin.Context, userID int) bool {
 	return requireSecureVerificationMethod(c, secureVerificationMethodPasskey)
 }
 
+// requireSecureVerificationMethod 校验 session 中是否已完成指定方式的安全验证。
 func requireSecureVerificationMethod(c *gin.Context, method string) bool {
 	session := sessions.Default(c)
 	verifiedAt, ok := session.Get(SecureVerificationSessionKey).(int64)

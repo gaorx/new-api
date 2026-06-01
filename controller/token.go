@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// buildMaskedTokenResponse 构造脱敏后的 token 响应对象。
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
 		return nil
@@ -23,6 +24,7 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	return &maskedToken
 }
 
+// buildMaskedTokenResponses 批量构造脱敏后的 token 响应列表。
 func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	maskedTokens := make([]*model.Token, 0, len(tokens))
 	for _, token := range tokens {
@@ -31,6 +33,9 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	return maskedTokens
 }
 
+// GetAllTokens 分页获取当前用户的全部 token 列表。
+// 参数：
+//   - c：当前请求上下文，用于读取当前用户和分页参数。
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -45,6 +50,9 @@ func GetAllTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// SearchTokens 按关键字或 token 值搜索当前用户的 token 列表。
+// 参数：
+//   - c：当前请求上下文，用于读取搜索条件和分页参数。
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	keyword := c.Query("keyword")
@@ -62,6 +70,9 @@ func SearchTokens(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// GetToken 获取当前用户的单个 token 详情。
+// 参数：
+//   - c：当前请求上下文，用于读取 token ID 并返回详情。
 func GetToken(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -77,6 +88,9 @@ func GetToken(c *gin.Context) {
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
+// GetTokenKey 获取当前用户某个 token 的完整明文 key。
+// 参数：
+//   - c：当前请求上下文，用于读取 token ID 并返回完整 key。
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -94,6 +108,9 @@ func GetTokenKey(c *gin.Context) {
 	})
 }
 
+// GetTokenStatus 以 OpenAI 风格返回当前 token 的额度状态摘要。
+// 参数：
+//   - c：当前请求上下文，用于读取 token_id 并返回额度信息。
 func GetTokenStatus(c *gin.Context) {
 	tokenId := c.GetInt("token_id")
 	userId := c.GetInt("id")
@@ -115,6 +132,9 @@ func GetTokenStatus(c *gin.Context) {
 	})
 }
 
+// GetTokenUsage 根据 Bearer token 查询该 token 的额度和限制信息。
+// 参数：
+//   - c：当前请求上下文，用于从 Authorization 头中读取 token。
 func GetTokenUsage(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
@@ -164,6 +184,9 @@ func GetTokenUsage(c *gin.Context) {
 	})
 }
 
+// AddToken 创建新的访问 token。
+// 参数：
+//   - c：当前请求上下文，用于读取 token 配置并执行创建。
 func AddToken(c *gin.Context) {
 	token := model.Token{}
 	err := c.ShouldBindJSON(&token)
@@ -233,6 +256,9 @@ func AddToken(c *gin.Context) {
 	})
 }
 
+// DeleteToken 删除当前用户的指定 token。
+// 参数：
+//   - c：当前请求上下文，用于读取 token ID 并执行删除。
 func DeleteToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -247,6 +273,9 @@ func DeleteToken(c *gin.Context) {
 	})
 }
 
+// UpdateToken 更新当前用户的指定 token，支持仅更新状态。
+// 参数：
+//   - c：当前请求上下文，用于读取 token 更新内容和 status_only 开关。
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
@@ -312,10 +341,14 @@ func UpdateToken(c *gin.Context) {
 	})
 }
 
+// TokenBatch 表示批量 token 操作的请求体。
 type TokenBatch struct {
-	Ids []int `json:"ids"`
+	Ids []int `json:"ids"` // 需要批量处理的 token ID 列表。
 }
 
+// DeleteTokenBatch 批量删除当前用户的多个 token。
+// 参数：
+//   - c：当前请求上下文，用于读取 token ID 列表并执行删除。
 func DeleteTokenBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
@@ -335,6 +368,9 @@ func DeleteTokenBatch(c *gin.Context) {
 	})
 }
 
+// GetTokenKeysBatch 批量获取多个 token 的完整 key。
+// 参数：
+//   - c：当前请求上下文，用于读取 token ID 列表并返回 key 映射。
 func GetTokenKeysBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {

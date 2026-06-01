@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
+// UpdateVideoTaskAll 批量更新某个平台下的全部视频任务状态。
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
 		if err := updateVideoTaskAll(ctx, platform, channelId, taskIds, taskM); err != nil {
@@ -27,6 +28,7 @@ func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, tas
 	return nil
 }
 
+// updateVideoTaskAll 更新指定渠道下一批视频任务的状态。
 func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
 	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
 	if len(taskIds) == 0 {
@@ -62,6 +64,7 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	return nil
 }
 
+// updateVideoSingleTask 更新单个视频任务的状态与结果。
 func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, channel *model.Channel, taskId string, taskM map[string]*model.Task) error {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
@@ -278,6 +281,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	return nil
 }
 
+// redactVideoResponseBody 脱敏视频任务响应体中的大字段或敏感内容。
 func redactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -304,6 +308,7 @@ func redactVideoResponseBody(body []byte) []byte {
 	return b
 }
 
+// truncateBase64 截断过长的 base64 字符串，便于日志记录。
 func truncateBase64(s string) string {
 	const maxKeep = 256
 	if len(s) <= maxKeep {

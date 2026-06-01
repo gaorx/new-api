@@ -13,8 +13,11 @@ import (
 )
 
 // MigrateConsoleSetting 迁移旧的控制台相关配置到 console_setting.*
+// 参数：
+//   - c：当前请求上下文，用于触发一次性迁移并返回结果。
 func MigrateConsoleSetting(c *gin.Context) {
 	// 读取全部 option
+	// 先加载所有旧 option，后续统一放入 map 便于按键名迁移。
 	opts, err := model.AllOption()
 	if err != nil {
 		common.SysError("failed to get all options: " + err.Error())
@@ -22,12 +25,14 @@ func MigrateConsoleSetting(c *gin.Context) {
 		return
 	}
 	// 建立 map
+	// 把 option 列表拍平成 key-value map，方便直接按旧键读取。
 	valMap := map[string]string{}
 	for _, o := range opts {
 		valMap[o.Key] = o.Value
 	}
 
 	// 处理 APIInfo
+	// 旧版 ApiInfo 迁移到 console_setting.api_info，并限制最大条目数。
 	if v := valMap["ApiInfo"]; v != "" {
 		var arr []map[string]interface{}
 		if err := json.Unmarshal([]byte(v), &arr); err == nil {
@@ -40,11 +45,13 @@ func MigrateConsoleSetting(c *gin.Context) {
 		model.UpdateOption("ApiInfo", "")
 	}
 	// Announcements 直接搬
+	// 公告配置无需结构转换，直接迁移到新键并清空旧键。
 	if v := valMap["Announcements"]; v != "" {
 		model.UpdateOption("console_setting.announcements", v)
 		model.UpdateOption("Announcements", "")
 	}
 	// FAQ 转换
+	// FAQ 需要兼容旧字段名，并统一映射为 question/answer 结构。
 	if v := valMap["FAQ"]; v != "" {
 		var arr []map[string]interface{}
 		if err := json.Unmarshal([]byte(v), &arr); err == nil {
@@ -71,6 +78,7 @@ func MigrateConsoleSetting(c *gin.Context) {
 		model.UpdateOption("FAQ", "")
 	}
 	// Uptime Kuma 迁移到新的 groups 结构（console_setting.uptime_kuma_groups）
+	// 只有同时存在旧 URL 与 Slug 时，才构造一条默认分组记录迁移到新结构。
 	url := valMap["UptimeKumaUrl"]
 	slug := valMap["UptimeKumaSlug"]
 	if url != "" && slug != "" {
@@ -88,6 +96,7 @@ func MigrateConsoleSetting(c *gin.Context) {
 		model.UpdateOption("console_setting.uptime_kuma_groups", string(bytes))
 	}
 	// 清空旧键内容
+	// 迁移完成后，把旧键值置空，避免新旧配置并存导致读取歧义。
 	if url != "" {
 		model.UpdateOption("UptimeKumaUrl", "")
 	}
@@ -96,10 +105,12 @@ func MigrateConsoleSetting(c *gin.Context) {
 	}
 
 	// 删除旧键记录
+	// 从数据库中物理删除旧键，确保后续只保留新的 console_setting.* 配置。
 	oldKeys := []string{"ApiInfo", "Announcements", "FAQ", "UptimeKumaUrl", "UptimeKumaSlug"}
 	model.DB.Where("key IN ?", oldKeys).Delete(&model.Option{})
 
 	// 重新加载 OptionMap
+	// 重建内存 OptionMap，让新配置立即对运行时生效。
 	model.InitOptionMap()
 	common.SysLog("console setting migrated")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "migrated"})

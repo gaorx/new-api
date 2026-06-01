@@ -26,6 +26,7 @@ import (
 var stripeAdaptor = &StripeAdaptor{}
 
 // StripePayRequest represents a payment request for Stripe checkout.
+// StripePayRequest 表示 Stripe 充值支付请求体。
 type StripePayRequest struct {
 	// Amount is the quantity of units to purchase.
 	Amount int64 `json:"amount"`
@@ -39,9 +40,11 @@ type StripePayRequest struct {
 	CancelURL string `json:"cancel_url,omitempty"`
 }
 
+// StripeAdaptor 表示 Stripe 充值适配器。
 type StripeAdaptor struct {
 }
 
+// RequestAmount 计算 Stripe 充值时的实际支付金额。
 func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 	if req.Amount < getStripeMinTopup() {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getStripeMinTopup())})
@@ -61,6 +64,7 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
 }
 
+// RequestPay 发起 Stripe 充值支付流程。
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	if req.PaymentMethod != model.PaymentMethodStripe {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "不支持的支付渠道"})
@@ -124,6 +128,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	})
 }
 
+// RequestStripeAmount 计算 Stripe 充值金额。
 func RequestStripeAmount(c *gin.Context) {
 	var req StripePayRequest
 	err := c.ShouldBindJSON(&req)
@@ -134,6 +139,7 @@ func RequestStripeAmount(c *gin.Context) {
 	stripeAdaptor.RequestAmount(c, &req)
 }
 
+// RequestStripePay 发起 Stripe 充值。
 func RequestStripePay(c *gin.Context) {
 	var req StripePayRequest
 	err := c.ShouldBindJSON(&req)
@@ -144,6 +150,7 @@ func RequestStripePay(c *gin.Context) {
 	stripeAdaptor.RequestPay(c, &req)
 }
 
+// StripeWebhook 处理 Stripe Webhook 回调。
 func StripeWebhook(c *gin.Context) {
 	ctx := c.Request.Context()
 	if !isStripeWebhookEnabled() {
@@ -189,6 +196,7 @@ func StripeWebhook(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// sessionCompleted 处理 Stripe checkout.session.completed 事件。
 func sessionCompleted(ctx context.Context, event stripe.Event, callerIp string) {
 	customerId := event.GetObjectValue("customer")
 	referenceId := event.GetObjectValue("client_reference_id")
@@ -209,6 +217,7 @@ func sessionCompleted(ctx context.Context, event stripe.Event, callerIp string) 
 
 // sessionAsyncPaymentSucceeded handles delayed payment methods (bank transfer, SEPA, etc.)
 // that confirm payment after the checkout session completes.
+// sessionAsyncPaymentSucceeded 处理 Stripe 异步支付成功事件。
 func sessionAsyncPaymentSucceeded(ctx context.Context, event stripe.Event, callerIp string) {
 	customerId := event.GetObjectValue("customer")
 	referenceId := event.GetObjectValue("client_reference_id")
@@ -219,6 +228,7 @@ func sessionAsyncPaymentSucceeded(ctx context.Context, event stripe.Event, calle
 
 // sessionAsyncPaymentFailed marks orders as failed when delayed payment methods
 // ultimately fail (e.g. bank transfer not received, SEPA rejected).
+// sessionAsyncPaymentFailed 处理 Stripe 异步支付失败事件。
 func sessionAsyncPaymentFailed(ctx context.Context, event stripe.Event, callerIp string) {
 	referenceId := event.GetObjectValue("client_reference_id")
 	logger.LogWarn(ctx, fmt.Sprintf("Stripe 异步支付失败 trade_no=%s client_ip=%s", referenceId, callerIp))
@@ -256,6 +266,7 @@ func sessionAsyncPaymentFailed(ctx context.Context, event stripe.Event, callerIp
 }
 
 // fulfillOrder is the shared logic for crediting quota after payment is confirmed.
+// fulfillOrder 完成 Stripe 充值订单并发放额度。
 func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, customerId string, callerIp string) {
 	if len(referenceId) == 0 {
 		logger.LogWarn(ctx, fmt.Sprintf("Stripe 完成订单时缺少订单号 client_ip=%s", callerIp))
@@ -289,6 +300,7 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 	logger.LogInfo(ctx, fmt.Sprintf("Stripe 充值成功 trade_no=%s amount_total=%.2f currency=%s event_type=%s client_ip=%s", referenceId, total/100, currency, string(event.Type), callerIp))
 }
 
+// sessionExpired 处理 Stripe 会话过期事件。
 func sessionExpired(ctx context.Context, event stripe.Event) {
 	referenceId := event.GetObjectValue("client_reference_id")
 	status := event.GetObjectValue("status")
@@ -338,6 +350,7 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
 // Returns the checkout session URL or an error if the session creation fails.
+// genStripeLink 生成 Stripe Checkout 支付链接。
 func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string) (string, error) {
 	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
 		return "", fmt.Errorf("无效的Stripe API密钥")
@@ -385,6 +398,7 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 	return result.URL, nil
 }
 
+// GetChargedAmount 计算某次 Stripe 充值最终扣费金额。
 func GetChargedAmount(count float64, user model.User) float64 {
 	topUpGroupRatio := common.GetTopupGroupRatio(user.Group)
 	if topUpGroupRatio == 0 {
@@ -394,6 +408,7 @@ func GetChargedAmount(count float64, user model.User) float64 {
 	return count * topUpGroupRatio
 }
 
+// getStripePayMoney 根据充值额度和分组计算 Stripe 支付金额。
 func getStripePayMoney(amount float64, group string) float64 {
 	originalAmount := amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -415,6 +430,7 @@ func getStripePayMoney(amount float64, group string) float64 {
 	return payMoney
 }
 
+// getStripeMinTopup 获取 Stripe 最小充值额度。
 func getStripeMinTopup() int64 {
 	minTopup := setting.StripeMinTopUp
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {

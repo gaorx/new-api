@@ -21,6 +21,11 @@ import (
 )
 
 // videoProxyError returns a standardized OpenAI-style error response.
+// 参数：
+//   - c：当前请求上下文，用于返回错误响应。
+//   - status：HTTP 状态码。
+//   - errType：OpenAI 风格错误类型。
+//   - message：错误消息。
 func videoProxyError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{
 		"error": gin.H{
@@ -30,6 +35,9 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
+// VideoProxy 代理访问已完成视频任务的最终视频内容。
+// 参数：
+//   - c：当前请求上下文，用于读取 task_id、校验任务状态并代理回源视频。
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
@@ -171,6 +179,13 @@ func VideoProxy(c *gin.Context) {
 	}
 }
 
+// writeVideoDataURL 将 data URL 中的 base64 视频内容写回 HTTP 响应。
+// 参数：
+//   - c：当前请求上下文，用于写入响应头和视频数据。
+//   - dataURL：待解码的视频 data URL。
+//
+// 返回：
+//   - error：data URL 不合法或 base64 解码失败时返回错误。
 func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	parts := strings.SplitN(dataURL, ",", 2)
 	if len(parts) != 2 {

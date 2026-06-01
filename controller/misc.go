@@ -20,7 +20,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TestStatus 检查服务和数据库是否正常，并返回基础 HTTP 统计信息。
+// 参数：
+//   - c：当前请求上下文，用于返回服务健康状态。
 func TestStatus(c *gin.Context) {
+	// 先探测数据库连接状态；数据库不可用时直接返回服务异常。
 	err := model.PingDB()
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -30,6 +34,7 @@ func TestStatus(c *gin.Context) {
 		return
 	}
 	// 获取HTTP统计信息
+	// 数据库可用时，再附带返回 HTTP 请求统计。
 	httpStats := middleware.GetStats()
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
@@ -39,8 +44,12 @@ func TestStatus(c *gin.Context) {
 	return
 }
 
+// GetStatus 返回前端启动和登录页所需的系统公开配置状态。
+// 参数：
+//   - c：当前请求上下文，用于返回系统启用项、OAuth 配置和文案设置。
 func GetStatus(c *gin.Context) {
 
+	// 先读取控制台、Passkey 和法务相关配置，并在 OptionMap 读锁下安全访问共享选项。
 	cs := console_setting.GetConsoleSetting()
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
@@ -48,6 +57,7 @@ func GetStatus(c *gin.Context) {
 	passkeySetting := system_setting.GetPasskeySettings()
 	legalSetting := system_setting.GetLegalSettings()
 
+	// 组装前端启动所需的公开配置与功能开关集合。
 	data := gin.H{
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
@@ -123,6 +133,7 @@ func GetStatus(c *gin.Context) {
 	}
 
 	// 根据启用状态注入可选内容
+	// 只有对应模块启用时，才附带返回 API 信息、公告和 FAQ 内容。
 	if cs.ApiInfoEnabled {
 		data["api_info"] = console_setting.GetApiInfo()
 	}
@@ -134,8 +145,10 @@ func GetStatus(c *gin.Context) {
 	}
 
 	// Add enabled custom OAuth providers
+	// 把启用中的自定义 OAuth 提供商也注入到前端状态里。
 	customProviders := oauth.GetEnabledCustomProviders()
 	if len(customProviders) > 0 {
+		// 这里定义一个对外暴露的精简结构，避免泄露敏感配置。
 		type CustomOAuthInfo struct {
 			Id                    int    `json:"id"`
 			Name                  string `json:"name"`
@@ -147,6 +160,7 @@ func GetStatus(c *gin.Context) {
 		}
 		providersInfo := make([]CustomOAuthInfo, 0, len(customProviders))
 		for _, p := range customProviders {
+			// 逐个提取允许暴露给前端的提供商公开信息。
 			config := p.GetConfig()
 			providersInfo = append(providersInfo, CustomOAuthInfo{
 				Id:                    config.Id,
@@ -161,6 +175,7 @@ func GetStatus(c *gin.Context) {
 		data["custom_oauth_providers"] = providersInfo
 	}
 
+	// 返回系统公开状态数据。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -169,7 +184,11 @@ func GetStatus(c *gin.Context) {
 	return
 }
 
+// GetNotice 获取站点公告内容。
+// 参数：
+//   - c：当前请求上下文，用于返回公告文案。
 func GetNotice(c *gin.Context) {
+	// 在读锁保护下读取公告配置项。
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 	c.JSON(http.StatusOK, gin.H{
@@ -180,7 +199,11 @@ func GetNotice(c *gin.Context) {
 	return
 }
 
+// GetAbout 获取关于页内容。
+// 参数：
+//   - c：当前请求上下文，用于返回 About 文案。
 func GetAbout(c *gin.Context) {
+	// 在读锁保护下读取 About 配置项。
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 	c.JSON(http.StatusOK, gin.H{
@@ -191,7 +214,11 @@ func GetAbout(c *gin.Context) {
 	return
 }
 
+// GetUserAgreement 获取用户协议内容。
+// 参数：
+//   - c：当前请求上下文，用于返回用户协议文案。
 func GetUserAgreement(c *gin.Context) {
+	// 直接返回法务设置中的用户协议文本。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -200,7 +227,11 @@ func GetUserAgreement(c *gin.Context) {
 	return
 }
 
+// GetPrivacyPolicy 获取隐私政策内容。
+// 参数：
+//   - c：当前请求上下文，用于返回隐私政策文案。
 func GetPrivacyPolicy(c *gin.Context) {
+	// 直接返回法务设置中的隐私政策文本。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -209,7 +240,11 @@ func GetPrivacyPolicy(c *gin.Context) {
 	return
 }
 
+// GetMidjourney 获取首页或控制台展示用的 Midjourney 文案配置。
+// 参数：
+//   - c：当前请求上下文，用于返回 Midjourney 配置内容。
 func GetMidjourney(c *gin.Context) {
+	// 在读锁保护下读取 Midjourney 配置项。
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 	c.JSON(http.StatusOK, gin.H{
@@ -220,7 +255,11 @@ func GetMidjourney(c *gin.Context) {
 	return
 }
 
+// GetHomePageContent 获取首页内容配置。
+// 参数：
+//   - c：当前请求上下文，用于返回首页文案内容。
 func GetHomePageContent(c *gin.Context) {
+	// 在读锁保护下读取首页内容配置项。
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 	c.JSON(http.StatusOK, gin.H{
@@ -231,7 +270,11 @@ func GetHomePageContent(c *gin.Context) {
 	return
 }
 
+// SendEmailVerification 发送邮箱验证码邮件，用于注册或邮箱绑定前校验。
+// 参数：
+//   - c：当前请求上下文，用于读取邮箱参数并触发邮件发送。
 func SendEmailVerification(c *gin.Context) {
+	// 先校验邮箱格式是否合法。
 	email := c.Query("email")
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -240,6 +283,7 @@ func SendEmailVerification(c *gin.Context) {
 		})
 		return
 	}
+	// 解析邮箱本地部分和域名部分，用于后续白名单和别名限制校验。
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
 		c.JSON(http.StatusOK, gin.H{
@@ -251,6 +295,7 @@ func SendEmailVerification(c *gin.Context) {
 	localPart := parts[0]
 	domainPart := parts[1]
 	if common.EmailDomainRestrictionEnabled {
+		// 如启用了邮箱域名白名单，则只允许白名单中的域名。
 		allowed := false
 		for _, domain := range common.EmailDomainWhitelist {
 			if domainPart == domain {
@@ -267,6 +312,7 @@ func SendEmailVerification(c *gin.Context) {
 		}
 	}
 	if common.EmailAliasRestrictionEnabled {
+		// 如启用了邮箱别名限制，则拒绝带 `+` 或 `.` 的地址别名写法。
 		containsSpecialSymbols := strings.Contains(localPart, "+") || strings.Contains(localPart, ".")
 		if containsSpecialSymbols {
 			c.JSON(http.StatusOK, gin.H{
@@ -277,6 +323,7 @@ func SendEmailVerification(c *gin.Context) {
 		}
 	}
 
+	// 已被占用的邮箱不再发送注册验证邮件。
 	if model.IsEmailAlreadyTaken(email) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -284,6 +331,7 @@ func SendEmailVerification(c *gin.Context) {
 		})
 		return
 	}
+	// 生成验证码并注册到验证码缓存，再构造邮件正文。
 	code := common.GenerateVerificationCode(6)
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
 	subject := fmt.Sprintf("%s邮箱验证邮件", common.SystemName)
@@ -295,6 +343,7 @@ func SendEmailVerification(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 返回发送成功结果。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -302,7 +351,11 @@ func SendEmailVerification(c *gin.Context) {
 	return
 }
 
+// SendPasswordResetEmail 发送密码重置邮件；若邮箱存在则发送重置链接。
+// 参数：
+//   - c：当前请求上下文，用于读取邮箱参数并触发邮件发送。
 func SendPasswordResetEmail(c *gin.Context) {
+	// 先校验邮箱格式是否合法。
 	email := c.Query("email")
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -311,6 +364,7 @@ func SendPasswordResetEmail(c *gin.Context) {
 		})
 		return
 	}
+	// 只有邮箱存在时才真正生成重置 token 并发送邮件。
 	if model.IsEmailAlreadyTaken(email) {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
@@ -325,20 +379,27 @@ func SendPasswordResetEmail(c *gin.Context) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("failed to send password reset email to %s: %s", email, err.Error()))
 		}
 	}
+	// 无论邮箱是否存在，都统一返回成功，避免枚举邮箱存在性。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
 }
 
+// PasswordResetRequest 表示密码重置接口的请求体。
 type PasswordResetRequest struct {
-	Email string `json:"email"`
-	Token string `json:"token"`
+	Email string `json:"email"` // 需要重置密码的邮箱地址。
+	Token string `json:"token"` // 重置链接或邮件中的校验 token。
 }
 
+// ResetPassword 校验密码重置 token，并为目标邮箱生成新密码。
+// 参数：
+//   - c：当前请求上下文，用于读取重置请求并返回新密码。
 func ResetPassword(c *gin.Context) {
+	// 解析密码重置请求体。
 	var req PasswordResetRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	// 邮箱和 token 缺一不可。
 	if req.Email == "" || req.Token == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -346,6 +407,7 @@ func ResetPassword(c *gin.Context) {
 		})
 		return
 	}
+	// 校验 token 是否有效且未过期。
 	if !common.VerifyCodeWithKey(req.Email, req.Token, common.PasswordResetPurpose) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -353,12 +415,14 @@ func ResetPassword(c *gin.Context) {
 		})
 		return
 	}
+	// 生成新密码并回写到目标用户账号。
 	password := common.GenerateVerificationCode(12)
 	err = model.ResetUserPasswordByEmail(req.Email, password)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	// 清理已使用的重置 token，并把新密码返回前端。
 	common.DeleteKey(req.Email, common.PasswordResetPurpose)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

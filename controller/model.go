@@ -30,6 +30,7 @@ var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
+// init 初始化全局模型列表、模型映射以及渠道到模型列表的缓存。
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
 	for i := 0; i < constant.APITypeDummy; i++ {
@@ -110,6 +111,12 @@ func init() {
 	})
 }
 
+// channelOwnerName 推导某个渠道类型对应的模型归属名称。
+// 参数：
+//   - channelType：渠道类型枚举值。
+//
+// 返回：
+//   - string：模型归属名称；无法识别时回退为渠道类型名的小写形式。
 func channelOwnerName(channelType int) string {
 	apiType, success := common.ChannelType2APIType(channelType)
 	if !success {
@@ -128,6 +135,13 @@ func channelOwnerName(channelType int) string {
 	return strings.ToLower(constant.GetChannelTypeName(channelType))
 }
 
+// getPreferredModelOwners 查询给定模型在指定分组下更合适的 owner 名称。
+// 参数：
+//   - modelNames：待查询模型名列表。
+//   - groups：可用分组列表。
+//
+// 返回：
+//   - map[string]string：模型名到 owner 名称的映射。
 func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
 	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
 	if err != nil {
@@ -150,6 +164,13 @@ func getPreferredModelOwners(modelNames []string, groups []string) map[string]st
 	return owners
 }
 
+// buildOpenAIModel 构造一个对外返回的 OpenAI 风格模型对象。
+// 参数：
+//   - modelName：模型名称。
+//   - ownerByModel：模型到 owner 的覆盖映射。
+//
+// 返回：
+//   - dto.OpenAIModels：可直接返回前端或兼容接口的模型对象。
 func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
 	var oaiModel dto.OpenAIModels
 	if staticModel, ok := openAIModelsMap[modelName]; ok {
@@ -169,12 +190,20 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 	return oaiModel
 }
 
+// modelListGroups 表示模型列表查询时涉及的用户/令牌分组上下文。
 type modelListGroups struct {
-	userGroup   string
-	tokenGroup  string
-	ownerGroups []string
+	userGroup   string   // 用户所属主分组。
+	tokenGroup  string   // 当前 token 指定的分组。
+	ownerGroups []string // 用于 owner 选择和模型可见性判断的分组集合。
 }
 
+// getModelListGroups 解析当前请求的用户分组和 token 分组上下文。
+// 参数：
+//   - c：当前请求上下文，用于从 gin context 中读取分组信息。
+//
+// 返回：
+//   - modelListGroups：归一化后的分组上下文。
+//   - error：读取用户分组失败时返回错误。
 func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
@@ -205,6 +234,10 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
+// ListModels 根据当前用户、token 和目标模型类型返回可用模型列表。
+// 参数：
+//   - c：当前请求上下文，用于读取用户、token 和分组上下文。
+//   - modelType：目标下游模型接口类型。
 func ListModels(c *gin.Context, modelType int) {
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
@@ -315,6 +348,9 @@ func ListModels(c *gin.Context, modelType int) {
 	}
 }
 
+// ChannelListModels 返回全局静态 OpenAI 风格模型列表。
+// 参数：
+//   - c：当前请求上下文。
 func ChannelListModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
@@ -322,6 +358,9 @@ func ChannelListModels(c *gin.Context) {
 	})
 }
 
+// DashboardListModels 返回渠道类型到模型列表的映射。
+// 参数：
+//   - c：当前请求上下文。
 func DashboardListModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
@@ -329,6 +368,9 @@ func DashboardListModels(c *gin.Context) {
 	})
 }
 
+// EnabledListModels 返回当前系统中已启用的模型名列表。
+// 参数：
+//   - c：当前请求上下文。
 func EnabledListModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
@@ -336,6 +378,10 @@ func EnabledListModels(c *gin.Context) {
 	})
 }
 
+// RetrieveModel 获取单个模型的兼容详情。
+// 参数：
+//   - c：当前请求上下文，用于读取模型名。
+//   - modelType：目标兼容接口类型。
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
 	if aiModel, ok := openAIModelsMap[modelId]; ok {

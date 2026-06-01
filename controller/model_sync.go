@@ -36,10 +36,12 @@ func normalizeLocale(locale string) (string, bool) {
 	}
 }
 
+// getUpstreamBase 获取模型同步上游的基础地址。
 func getUpstreamBase() string {
 	return common.GetEnvOrDefaultString("SYNC_UPSTREAM_BASE", "https://basellm.github.io/llm-metadata")
 }
 
+// getUpstreamURLs 根据 locale 生成模型和供应商元数据的上游地址。
 func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
 	base := strings.TrimRight(getUpstreamBase(), "/")
 	if l, ok := normalizeLocale(locale); ok && l != "" {
@@ -49,12 +51,14 @@ func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
 	return fmt.Sprintf("%s/api/newapi/models.json", base), fmt.Sprintf("%s/api/newapi/vendors.json", base)
 }
 
+// upstreamEnvelope 表示同步上游统一的响应外层结构。
 type upstreamEnvelope[T any] struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Data    []T    `json:"data"`
 }
 
+// upstreamModel 表示上游模型元数据结构。
 type upstreamModel struct {
 	Description string          `json:"description"`
 	Endpoints   json.RawMessage `json:"endpoints"`
@@ -66,6 +70,7 @@ type upstreamModel struct {
 	VendorName  string          `json:"vendor_name"`
 }
 
+// upstreamVendor 表示上游供应商元数据结构。
 type upstreamVendor struct {
 	Description string `json:"description"`
 	Icon        string `json:"icon"`
@@ -79,16 +84,19 @@ var (
 	cacheMutex sync.RWMutex
 )
 
+// overwriteField 表示单个模型允许覆盖更新的字段集合。
 type overwriteField struct {
 	ModelName string   `json:"model_name"`
 	Fields    []string `json:"fields"`
 }
 
+// syncRequest 表示模型同步接口的请求体。
 type syncRequest struct {
 	Overwrite []overwriteField `json:"overwrite"`
 	Locale    string           `json:"locale"`
 }
 
+// newHTTPClient 创建一个带同步优化配置的 HTTP 客户端。
 func newHTTPClient() *http.Client {
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 10)
 	dialer := &net.Dialer{Timeout: time.Duration(timeoutSec) * time.Second}
@@ -123,6 +131,7 @@ var (
 	httpClient     *http.Client
 )
 
+// getHTTPClient 懒加载并复用模型同步用的 HTTP 客户端。
 func getHTTPClient() *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = newHTTPClient()
@@ -130,6 +139,7 @@ func getHTTPClient() *http.Client {
 	return httpClient
 }
 
+// fetchJSON 从指定 URL 拉取 JSON，并支持 ETag 缓存与有限重试。
 func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T]) error {
 	var lastErr error
 	attempts := common.GetEnvOrDefault("SYNC_HTTP_RETRY", 3)
@@ -234,6 +244,7 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 	return lastErr
 }
 
+// ensureVendorID 确保指定供应商在本地存在，并返回其 ID。
 func ensureVendorID(vendorName string, vendorByName map[string]upstreamVendor, vendorIDCache map[string]int, createdVendors *int) int {
 	if vendorName == "" {
 		return 0
@@ -468,6 +479,7 @@ func SyncUpstreamModels(c *gin.Context) {
 	})
 }
 
+// containsField 判断字段列表中是否包含目标字段名，忽略大小写和空白。
 func containsField(fields []string, key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	for _, f := range fields {
@@ -478,6 +490,7 @@ func containsField(fields []string, key string) bool {
 	return false
 }
 
+// coalesce 返回第一个非空字符串，否则返回回退值。
 func coalesce(a, b string) string {
 	if strings.TrimSpace(a) != "" {
 		return a
@@ -485,6 +498,7 @@ func coalesce(a, b string) string {
 	return b
 }
 
+// chooseStatus 选择同步时采用的状态值。
 func chooseStatus(primary, fallback int) int {
 	if primary == 0 && fallback != 0 {
 		return fallback
@@ -496,6 +510,8 @@ func chooseStatus(primary, fallback int) int {
 }
 
 // SyncUpstreamPreview 预览上游与本地的差异（仅用于弹窗选择）
+// 参数：
+//   - c：当前请求上下文，用于读取 locale 并返回差异预览结果。
 func SyncUpstreamPreview(c *gin.Context) {
 	// 1) 拉取上游数据
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)

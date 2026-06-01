@@ -13,7 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetAllModelsMeta 获取模型列表（分页）
+// GetAllModelsMeta 分页获取模型元数据列表。
+// 参数：
+//   - c：当前请求上下文，用于读取分页参数并返回模型列表。
 func GetAllModelsMeta(c *gin.Context) {
 
 	pageInfo := common.GetPageQuery(c)
@@ -41,7 +43,9 @@ func GetAllModelsMeta(c *gin.Context) {
 	})
 }
 
-// SearchModelsMeta 搜索模型列表
+// SearchModelsMeta 按关键字和供应商搜索模型元数据。
+// 参数：
+//   - c：当前请求上下文，用于读取搜索条件和分页参数。
 func SearchModelsMeta(c *gin.Context) {
 
 	keyword := c.Query("keyword")
@@ -60,7 +64,9 @@ func SearchModelsMeta(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-// GetModelMeta 根据 ID 获取单条模型信息
+// GetModelMeta 根据 ID 获取单个模型元数据详情。
+// 参数：
+//   - c：当前请求上下文，用于读取模型 ID 并返回详情。
 func GetModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -77,7 +83,9 @@ func GetModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, &m)
 }
 
-// CreateModelMeta 新建模型
+// CreateModelMeta 新建模型元数据。
+// 参数：
+//   - c：当前请求上下文，用于读取模型数据并返回创建结果。
 func CreateModelMeta(c *gin.Context) {
 	var m model.Model
 	if err := c.ShouldBindJSON(&m); err != nil {
@@ -105,7 +113,9 @@ func CreateModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, &m)
 }
 
-// UpdateModelMeta 更新模型
+// UpdateModelMeta 更新模型元数据，支持仅更新状态。
+// 参数：
+//   - c：当前请求上下文，用于读取模型更新内容和 status_only 开关。
 func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 
@@ -144,7 +154,9 @@ func UpdateModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, &m)
 }
 
-// DeleteModelMeta 删除模型
+// DeleteModelMeta 删除指定模型元数据。
+// 参数：
+//   - c：当前请求上下文，用于读取模型 ID 并执行删除。
 func DeleteModelMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -160,7 +172,9 @@ func DeleteModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
-// enrichModels 批量填充附加信息：端点、渠道、分组、计费类型，避免 N+1 查询
+// enrichModels 批量填充附加信息：端点、渠道、分组、计费类型，避免 N+1 查询。
+// 参数：
+//   - models：待补充派生字段的模型列表。
 func enrichModels(models []*model.Model) {
 	if len(models) == 0 {
 		return

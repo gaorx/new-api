@@ -37,33 +37,56 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// testResult 表示一次渠道测试执行后的结果封装。
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context     *gin.Context        // 测试过程中构造的 Gin 上下文，便于后续日志或响应处理复用。
+	localErr    error               // 本地执行错误，如请求构造、转换失败等。
+	newAPIError *types.NewAPIError  // 标准化后的统一 API 错误对象。
 }
 
+// normalizeChannelTestEndpoint 规范化渠道测试使用的端点类型。
+// 参数：
+//   - channel：当前被测试的渠道对象。
+//   - modelName：测试使用的模型名。
+//   - endpointType：调用方显式传入的端点类型。
+//
+// 返回：
+//   - string：最终决定使用的端点类型字符串。
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
+	// 先优先尊重调用方显式传入的端点类型。
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
 		return normalized
 	}
+
+	// compact 后缀模型强制走 responses compact 端点。
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
+
+	// Codex 渠道默认用 responses 端点测试，而不是 chat completions。
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalized
 }
 
+// resolveChannelTestUserID 解析用于渠道测试的用户 ID。
+// 参数：
+//   - c：当前请求上下文，若存在登录用户则优先使用该用户。
+//
+// 返回：
+//   - int：最终用于测试的用户 ID。
+//   - error：无法解析测试用户时返回错误。
 func resolveChannelTestUserID(c *gin.Context) (int, error) {
+	// 有登录上下文时优先复用当前用户，便于保留真实权限和分组环境。
 	if c != nil {
 		if userID := c.GetInt("id"); userID > 0 {
 			return userID, nil
 		}
 	}
 
+	// 无登录用户时回退到 root 账户，保证管理端测试能力可正常执行。
 	var rootUser model.User
 	if err := model.DB.Select("id").Where("role = ?", common.RoleRootUser).First(&rootUser).Error; err != nil {
 		return 0, fmt.Errorf("failed to resolve channel test user: %w", err)
@@ -74,7 +97,18 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
+// testChannel 执行一次完整的单渠道模型测试流程。
+// 参数：
+//   - channel：待测试的渠道对象。
+//   - testUserID：用于构造测试上下文的用户 ID。
+//   - testModel：测试指定的模型名；为空时自动推断。
+//   - endpointType：指定测试端点类型；为空时自动推断。
+//   - isStream：是否按流式请求方式进行测试。
+//
+// 返回：
+//   - testResult：包含测试上下文、本地错误和标准化错误对象的结果封装。
 func testChannel(channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+	// 记录测试开始时间，供后续统计耗时和写消费日志使用。
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -85,15 +119,20 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeVidu,
 	}
+
+	// 对当前尚不支持“同步模型测试”的渠道类型直接返回本地错误。
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)
 		return testResult{
 			localErr: fmt.Errorf("%s channel test is not supported", channelTypeName),
 		}
 	}
+
+	// 构造一个仅用于测试的内存响应记录器和 Gin 上下文，不影响真实 HTTP 请求。
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
+	// 若未显式指定测试模型，则优先取渠道配置的测试模型，再回退到渠道第一个模型或默认模型。
 	testModel = strings.TrimSpace(testModel)
 	if testModel == "" {
 		if channel.TestModel != nil && *channel.TestModel != "" {
@@ -109,23 +148,28 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		}
 	}
 
+	// 规范化端点类型，确保测试时模型与端点协议相匹配。
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
 
+	// 默认按 chat completions 路径测试，后续再根据模型类型与端点类型动态改写。
 	requestPath := "/v1/chat/completions"
 
 	// 如果指定了端点类型，使用指定的端点类型
 	if endpointType != "" {
+		// 显式指定端点时，直接通过默认端点表映射到具体请求路径。
 		if endpointInfo, ok := common.GetDefaultEndpointInfo(constant.EndpointType(endpointType)); ok {
 			requestPath = endpointInfo.Path
 		}
 	} else {
 		// 如果没有指定端点类型，使用原有的自动检测逻辑
 
+		// rerank 模型默认走 rerank 路径。
 		if strings.Contains(strings.ToLower(testModel), "rerank") {
 			requestPath = "/v1/rerank"
 		}
 
 		// 先判断是否为 Embedding 模型
+		// 对常见 embedding 模型名和特定渠道类型做 embedding 路径切换。
 		if strings.Contains(strings.ToLower(testModel), "embedding") ||
 			strings.HasPrefix(testModel, "m3e") || // m3e 系列模型
 			strings.Contains(testModel, "bge-") || // bge 系列模型
@@ -135,24 +179,30 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		}
 
 		// VolcEngine 图像生成模型
+		// VolcEngine 的 seedream 模型属于图像生成，需改走图片生成端点。
 		if channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(testModel, "seedream") {
 			requestPath = "/v1/images/generations"
 		}
 
 		// responses-only models
+		// Codex 系列模型默认使用 responses 端点。
 		if strings.Contains(strings.ToLower(testModel), "codex") {
 			requestPath = "/v1/responses"
 		}
 
 		// responses compaction models (must use /v1/responses/compact)
+		// 带 compact 后缀的模型必须使用 compact 专用路径。
 		if strings.HasSuffix(testModel, ratio_setting.CompactModelSuffix) {
 			requestPath = "/v1/responses/compact"
 		}
 	}
+
+	// compact 路径下确保模型名也带上 compact 后缀，和端点协议保持一致。
 	if strings.HasPrefix(requestPath, "/v1/responses/compact") {
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
 	}
 
+	// 手动构造一个最小可用的测试 HTTP 请求对象，后续所有 relay 流程都基于它运行。
 	c.Request = &http.Request{
 		Method: "POST",
 		URL:    &url.URL{Path: requestPath}, // 使用动态路径
@@ -160,6 +210,7 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		Header: make(http.Header),
 	}
 
+	// 把测试用户缓存写入上下文，模拟真实用户环境中的认证与分组信息。
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
 		return testResult{
@@ -171,12 +222,14 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 	c.Set("id", testUserID)
 
 	//c.Request.Header.Set("Authorization", "Bearer "+channel.Key)
+	// 补齐测试请求所需的基础上下文字段，供后续 relay 与定价逻辑读取。
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
 
+	// 把目标渠道配置写入上下文，初始化渠道相关运行态信息。
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
 		return testResult{
@@ -187,6 +240,7 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 	}
 
 	// Determine relay format based on endpoint type or request path
+	// 根据测试端点类型或最终请求路径，推断本次测试应采用的 RelayFormat。
 	var relayFormat types.RelayFormat
 	if endpointType != "" {
 		// 根据指定的端点类型设置 relayFormat
@@ -236,8 +290,10 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		}
 	}
 
+	// 构造与目标模型和端点匹配的测试请求体对象。
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
 
+	// 基于测试请求生成完整的 RelayInfo，上层测试逻辑也复用正式 relay 链路。
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
 	if err != nil {
@@ -248,9 +304,11 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		}
 	}
 
+	// 标记本次调用为渠道测试，并初始化渠道元信息。
 	info.IsChannelTest = true
 	info.InitChannelMeta(c)
 
+	// 为表达式计费场景补充请求输入快照，保证测试计费和正式请求一致。
 	err = attachTestBillingRequestInput(info, request)
 	if err != nil {
 		return testResult{

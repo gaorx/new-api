@@ -29,10 +29,12 @@ var completionRatioMetaOptionKeys = []string{
 	"AudioCompletionRatio",
 }
 
+// isPaymentComplianceOptionKey 判断某个选项 key 是否属于支付合规确认字段。
 func isPaymentComplianceOptionKey(key string) bool {
 	return strings.HasPrefix(key, "payment_setting.compliance_")
 }
 
+// isPositiveOptionValue 判断配置值在数值语义下是否大于 0。
 func isPositiveOptionValue(value string) bool {
 	intValue, err := strconv.Atoi(strings.TrimSpace(value))
 	if err == nil {
@@ -42,6 +44,7 @@ func isPositiveOptionValue(value string) bool {
 	return err == nil && floatValue > 0
 }
 
+// collectModelNamesFromOptionValue 从 JSON 配置值中提取模型名集合。
 func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}) {
 	if strings.TrimSpace(raw) == "" {
 		return
@@ -57,6 +60,7 @@ func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}
 	}
 }
 
+// buildCompletionRatioMetaValue 构造 CompletionRatioMeta 选项的聚合 JSON 值。
 func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 	modelNames := make(map[string]struct{})
 	for _, key := range completionRatioMetaOptionKeys {
@@ -75,6 +79,9 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 	return string(jsonBytes)
 }
 
+// GetOptions 获取全部非敏感系统配置项。
+// 参数：
+//   - c：当前请求上下文，用于返回可公开的系统选项列表。
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
@@ -112,11 +119,15 @@ func GetOptions(c *gin.Context) {
 	})
 }
 
+// OptionUpdateRequest 表示通用配置更新接口的请求体。
 type OptionUpdateRequest struct {
-	Key   string `json:"key"`
-	Value any    `json:"value"`
+	Key   string `json:"key"`   // 待更新配置键名。
+	Value any    `json:"value"` // 待更新配置值。
 }
 
+// UpdateOption 更新单个系统配置项。
+// 参数：
+//   - c：当前请求上下文，用于读取更新请求并执行校验与持久化。
 func UpdateOption(c *gin.Context) {
 	var option OptionUpdateRequest
 	err := common.DecodeJson(c.Request.Body, &option)

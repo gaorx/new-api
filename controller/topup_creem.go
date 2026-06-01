@@ -26,6 +26,7 @@ const CreemSignatureHeader = "creem-signature"
 var creemAdaptor = &CreemAdaptor{}
 
 // 生成HMAC-SHA256签名
+// generateCreemSignature 生成 Creem Webhook 或请求签名。
 func generateCreemSignature(payload string, secret string) string {
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(payload))
@@ -33,6 +34,7 @@ func generateCreemSignature(payload string, secret string) string {
 }
 
 // 验证Creem webhook签名
+// verifyCreemSignature 校验 Creem 签名是否有效。
 func verifyCreemSignature(payload string, signature string, secret string) bool {
 	if secret == "" {
 		logger.LogWarn(context.Background(), fmt.Sprintf("Creem webhook secret 未配置 test_mode=%t signature=%q body=%q", setting.CreemTestMode, signature, payload))
@@ -47,11 +49,13 @@ func verifyCreemSignature(payload string, signature string, secret string) bool 
 	return hmac.Equal([]byte(signature), []byte(expectedSignature))
 }
 
+// CreemPayRequest 表示 Creem 充值支付请求体。
 type CreemPayRequest struct {
 	ProductId     string `json:"product_id"`
 	PaymentMethod string `json:"payment_method"`
 }
 
+// CreemProduct 表示 Creem 商品配置快照。
 type CreemProduct struct {
 	ProductId string  `json:"productId"`
 	Name      string  `json:"name"`
@@ -60,9 +64,11 @@ type CreemProduct struct {
 	Quota     int64   `json:"quota"`
 }
 
+// CreemAdaptor 表示 Creem 充值适配器。
 type CreemAdaptor struct {
 }
 
+// RequestPay 发起一次 Creem 充值支付流程。
 func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	if req.PaymentMethod != model.PaymentMethodCreem {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "不支持的支付渠道"})
@@ -141,6 +147,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	})
 }
 
+// RequestCreemPay 发起 Creem 充值支付。
 func RequestCreemPay(c *gin.Context) {
 	var req CreemPayRequest
 
@@ -166,6 +173,7 @@ func RequestCreemPay(c *gin.Context) {
 }
 
 // 新的Creem Webhook结构体，匹配实际的webhook数据格式
+// CreemWebhookEvent 表示 Creem Webhook 事件结构。
 type CreemWebhookEvent struct {
 	Id        string `json:"id"`
 	EventType string `json:"eventType"`
@@ -226,6 +234,7 @@ type CreemWebhookEvent struct {
 	} `json:"object"`
 }
 
+// CreemWebhook 处理 Creem Webhook 回调。
 func CreemWebhook(c *gin.Context) {
 	if !isCreemWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Creem webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -283,6 +292,7 @@ func CreemWebhook(c *gin.Context) {
 }
 
 // 处理支付完成事件
+// handleCheckoutCompleted 处理 Creem checkout.completed 事件。
 func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	// 验证订单状态
 	if event.Object.Order.Status != "paid" {
@@ -358,6 +368,7 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	c.Status(http.StatusOK)
 }
 
+// CreemCheckoutRequest 表示创建 Creem 结账会话的请求体。
 type CreemCheckoutRequest struct {
 	ProductId string `json:"product_id"`
 	RequestId string `json:"request_id"`
@@ -367,11 +378,13 @@ type CreemCheckoutRequest struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// CreemCheckoutResponse 表示 Creem 结账会话响应结构。
 type CreemCheckoutResponse struct {
 	CheckoutUrl string `json:"checkout_url"`
 	Id          string `json:"id"`
 }
 
+// genCreemLink 生成 Creem 结账链接。
 func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct, email string, username string) (string, error) {
 	if setting.CreemApiKey == "" {
 		return "", fmt.Errorf("未配置Creem API密钥")

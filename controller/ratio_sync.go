@@ -46,13 +46,22 @@ const (
 )
 
 func nearlyEqual(a, b float64) bool {
+	// 采用统一误差阈值比较浮点数，避免同步对比时受到精度噪声影响。
 	if a > b {
 		return a-b < floatEpsilon
 	}
 	return b-a < floatEpsilon
 }
 
+// valuesEqual 比较两个任意值是否可视为相等，浮点数会使用近似比较。
+// 参数：
+//   - a：左侧待比较值。
+//   - b：右侧待比较值。
+//
+// 返回：
+//   - bool：true 表示两个值在同步比较语义下相等。
 func valuesEqual(a, b interface{}) bool {
+	// 若两侧都是浮点数，则走近似比较；否则退化为直接比较。
 	af, aok := a.(float64)
 	bf, bok := b.(float64)
 	if aok && bok {
@@ -85,12 +94,19 @@ var numericPricingSyncFields = map[string]bool{
 	"model_price":            true,
 }
 
+// upstreamResult 表示单个上游倍率拉取任务的执行结果。
 type upstreamResult struct {
-	Name string         `json:"name"`
-	Data map[string]any `json:"data,omitempty"`
-	Err  string         `json:"err,omitempty"`
+	Name string         `json:"name"`           // 上游名称，必要时会附带渠道 ID。
+	Data map[string]any `json:"data,omitempty"` // 解析并转换后的上游倍率数据。
+	Err  string         `json:"err,omitempty"`  // 拉取或解析失败时的错误信息。
 }
 
+// valueMap 将不同类型的 map 统一转换成 `map[string]any`。
+// 参数：
+//   - value：原始 map 值，可能是 any/float64/string map。
+//
+// 返回：
+//   - map[string]any：统一后的 map 结构；不支持的类型返回 nil。
 func valueMap(value any) map[string]any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -104,6 +120,13 @@ func valueMap(value any) map[string]any {
 	}
 }
 
+// asFloat64 尝试把任意常见数值类型转换成 float64。
+// 参数：
+//   - value：待转换值。
+//
+// 返回：
+//   - float64：转换后的浮点值。
+//   - bool：true 表示转换成功。
 func asFloat64(value any) (float64, bool) {
 	switch typed := value.(type) {
 	case float64:
@@ -122,7 +145,15 @@ func asFloat64(value any) (float64, bool) {
 	}
 }
 
+// normalizeSyncValue 按字段语义标准化同步比较使用的值。
+// 参数：
+//   - field：倍率字段名。
+//   - value：原始字段值。
+//
+// 返回：
+//   - any：标准化后的字段值。
 func normalizeSyncValue(field string, value any) any {
+	// 数值字段统一转成 float64，便于后续跨来源比较。
 	if numericPricingSyncFields[field] {
 		if parsed, ok := asFloat64(value); ok {
 			return parsed
@@ -131,7 +162,12 @@ func normalizeSyncValue(field string, value any) any {
 	return value
 }
 
+// getLocalPricingSyncData 汇总当前本地系统用于同步对比的倍率数据。
+//
+// 返回：
+//   - map[string]any：本地倍率、价格和计费表达式数据快照。
 func getLocalPricingSyncData() map[string]any {
+	// 先基于 exposed ratio data 构造通用同步字段，再补充图片和音频专用倍率。
 	data := billing_setting.GetPricingSyncData(map[string]any(ratio_setting.GetExposedData()))
 	data["image_ratio"] = ratio_setting.GetImageRatioCopy()
 	data["audio_ratio"] = ratio_setting.GetAudioRatioCopy()
@@ -139,7 +175,11 @@ func getLocalPricingSyncData() map[string]any {
 	return data
 }
 
+// FetchUpstreamRatios 拉取多个上游或渠道的倍率配置，并与本地配置做差异对比。
+// 参数：
+//   - c：当前请求上下文，用于读取上游列表/渠道 ID、超时配置并返回差异结果。
 func FetchUpstreamRatios(c *gin.Context) {
+	// 解析请求体，支持直接传上游列表或通过渠道 ID 反查上游地址。
 	var req dto.UpstreamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.SysError("failed to bind upstream request: " + err.Error())
@@ -147,12 +187,14 @@ func FetchUpstreamRatios(c *gin.Context) {
 		return
 	}
 
+	// 未显式传超时时，使用默认超时值。
 	if req.Timeout <= 0 {
 		req.Timeout = defaultTimeoutSeconds
 	}
 
 	var upstreams []dto.UpstreamDTO
 
+	// 优先使用请求体直接给出的上游配置，并过滤掉非法 base URL。
 	if len(req.Upstreams) > 0 {
 		for _, u := range req.Upstreams {
 			if strings.HasPrefix(u.BaseURL, "http") {
@@ -164,6 +206,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 		}
 	} else if len(req.ChannelIDs) > 0 {
+		// 若传入的是渠道 ID，则先查库再提取每个渠道的 base URL。
 		intIds := make([]int, 0, len(req.ChannelIDs))
 		for _, id64 := range req.ChannelIDs {
 			intIds = append(intIds, int(id64))
@@ -186,16 +229,19 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}
 	}
 
+	// 过滤后若没有任何可用上游，则直接返回。
 	if len(upstreams) == 0 {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无有效上游渠道"})
 		return
 	}
 
+	// 准备并发执行所需的等待组、结果通道和并发限制信号量。
 	var wg sync.WaitGroup
 	ch := make(chan upstreamResult, len(upstreams))
 
 	sem := make(chan struct{}, maxConcurrentFetches)
 
+	// 构造带超时与连接优化的 HTTP 客户端。
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second, ResponseHeaderTimeout: 10 * time.Second}
 	if common.TLSInsecureSkipVerify {
@@ -217,14 +263,17 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 	client := &http.Client{Transport: transport}
 
+	// 为每个上游启动一个并发拉取任务。
 	for _, chn := range upstreams {
 		wg.Add(1)
 		go func(chItem dto.UpstreamDTO) {
 			defer wg.Done()
 
+			// 使用信号量限制同时进行的上游请求数量。
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// 识别特殊上游类型，并生成实际访问 URL。
 			isOpenRouter := chItem.Endpoint == "openrouter"
 
 			endpoint := chItem.Endpoint
@@ -243,14 +292,17 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 			isModelsDev := isModelsDevAPIEndpoint(fullURL)
 
+			// 若存在渠道 ID，则拼到名称后面，避免多个同名渠道结果难以区分。
 			uniqueName := chItem.Name
 			if chItem.ID != 0 {
 				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
 			}
 
+			// 为当前上游请求设置独立超时上下文。
 			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
 			defer cancel()
 
+			// 构造 HTTP GET 请求。
 			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 			if err != nil {
 				logger.LogWarn(c.Request.Context(), "build request failed: "+err.Error())
@@ -259,6 +311,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// OpenRouter requires Bearer token auth
+			// OpenRouter 渠道需要读取渠道 key 并按 Bearer 方式鉴权。
 			if isOpenRouter && chItem.ID != 0 {
 				dbCh, err := model.GetChannelById(chItem.ID, true)
 				if err != nil {
@@ -281,6 +334,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// 简单重试：最多 3 次，指数退避
+			// 对瞬时网络错误做最多 3 次指数退避重试。
 			var resp *http.Response
 			var lastErr error
 			for attempt := 0; attempt < 3; attempt++ {
@@ -296,6 +350,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				return
 			}
 			defer resp.Body.Close()
+			// 非 200 响应统一视为上游失败。
 			if resp.StatusCode != http.StatusOK {
 				logger.LogWarn(c.Request.Context(), "non-200 from "+chItem.Name+": "+resp.Status)
 				ch <- upstreamResult{Name: uniqueName, Err: resp.Status}
@@ -303,6 +358,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// Content-Type 和响应体大小校验
+			// 对响应类型做弱校验，并限制最大响应体大小，避免异常大包。
 			if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "application/json") {
 				logger.LogWarn(c.Request.Context(), "unexpected content-type from "+chItem.Name+": "+ct)
 			}
@@ -315,6 +371,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// type3: OpenRouter /v1/models -> convert per-token pricing to ratios
+			// OpenRouter 走专门的价格转换逻辑，把每 token 定价转换为本地倍率。
 			if isOpenRouter {
 				converted, err := convertOpenRouterToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
@@ -327,6 +384,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// type4: models.dev /api.json -> convert provider model pricing to ratios
+			// models.dev 也有独立格式，需要单独转换为本地倍率结构。
 			if isModelsDev {
 				converted, err := convertModelsDevToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
@@ -347,12 +405,14 @@ func FetchUpstreamRatios(c *gin.Context) {
 				Message string          `json:"message"`
 			}
 
+			// 先解析外层 success/data/message 包装。
 			if err := common.DecodeJson(bytes.NewReader(bodyBytes), &body); err != nil {
 				logger.LogWarn(c.Request.Context(), "json decode failed from "+chItem.Name+": "+err.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
 
+			// 若上游明确返回失败，则直接透传失败信息。
 			if !body.Success {
 				ch <- upstreamResult{Name: uniqueName, Err: body.Message}
 				return
@@ -361,6 +421,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			// 若 Data 为空，将继续按 type1 尝试解析（与多数静态 ratio_config 兼容）
 
 			// 尝试按 type1 解析
+			// 先尝试把 data 当成 ratio_config 风格的 map 结构解析。
 			var type1Data map[string]any
 			if err := common.Unmarshal(body.Data, &type1Data); err == nil {
 				// 如果包含至少一个 ratioTypes 字段，则认为是 type1
@@ -378,6 +439,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// 如果不是 type1，则尝试按 type2 (/api/pricing) 解析
+			// 否则按 pricing 列表格式解析，再手动折叠成 ratio_config 风格结构。
 			var pricingItems []struct {
 				ModelName            string   `json:"model_name"`
 				QuotaType            int      `json:"quota_type"`
@@ -398,6 +460,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				return
 			}
 
+			// 分字段累计 pricing 列表中的各种倍率、价格和计费表达式信息。
 			modelRatioMap := make(map[string]float64)
 			completionRatioMap := make(map[string]float64)
 			cacheRatioMap := make(map[string]float64)
@@ -441,6 +504,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				}
 			}
 
+			// 把不同字段的 map 统一拼装回前端同步接口使用的 data 结构。
 			converted := make(map[string]any)
 
 			if len(modelRatioMap) > 0 {
@@ -492,9 +556,11 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}(chn)
 	}
 
+	// 等待全部上游任务完成后关闭结果通道。
 	wg.Wait()
 	close(ch)
 
+	// 读取本地配置快照，并整理每个上游的测试结果和成功返回数据。
 	localData := getLocalPricingSyncData()
 
 	var testResults []dto.TestResult
@@ -522,8 +588,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}
 	}
 
+	// 基于本地数据和成功上游数据生成差异明细。
 	differences := buildDifferences(localData, successfulChannels)
 
+	// 返回差异结果以及每个上游的测试状态。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
@@ -533,20 +601,30 @@ func FetchUpstreamRatios(c *gin.Context) {
 	})
 }
 
+// buildDifferences 对比本地倍率数据与多个成功上游的数据，并生成差异清单。
+// 参数：
+//   - localData：本地倍率配置快照。
+//   - successfulChannels：成功拉取到数据的上游集合。
+//
+// 返回：
+//   - map[string]map[string]dto.DifferenceItem：按模型和字段组织的差异结果。
 func buildDifferences(localData map[string]any, successfulChannels []struct {
 	name string
 	data map[string]any
 }) map[string]map[string]dto.DifferenceItem {
+	// 先建立最终差异结果容器和全量模型集合。
 	differences := make(map[string]map[string]dto.DifferenceItem)
 
 	allModels := make(map[string]struct{})
 
+	// 收集本地配置中所有出现过的模型名。
 	for _, field := range pricingSyncFields {
 		for modelName := range valueMap(localData[field]) {
 			allModels[modelName] = struct{}{}
 		}
 	}
 
+	// 再补充所有成功上游中出现过的模型名，确保对比范围完整。
 	for _, channel := range successfulChannels {
 		for _, field := range pricingSyncFields {
 			for modelName := range valueMap(channel.data[field]) {
@@ -558,6 +636,7 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	confidenceMap := make(map[string]map[string]bool)
 
 	// 预处理阶段：检查pricing接口的可信度
+	// 对部分 pricing 接口的已知异常组合打上“不可信”标记，便于前端提示。
 	for _, channel := range successfulChannels {
 		confidenceMap[channel.name] = make(map[string]bool)
 
@@ -590,6 +669,7 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 		}
 	}
 
+	// 按模型和字段逐项对比本地值与各上游值，生成初步差异数据。
 	for modelName := range allModels {
 		for _, ratioType := range pricingSyncFields {
 			var localValue interface{} = nil
@@ -653,6 +733,7 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 		}
 	}
 
+	// 仅保留真正提供过差异数据的上游，去掉全程都是 same 的渠道列。
 	channelHasDiff := make(map[string]bool)
 	for _, ratioMap := range differences {
 		for _, item := range ratioMap {
@@ -664,6 +745,7 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 		}
 	}
 
+	// 清理没有实际差异的字段和模型项，收敛最终返回结构。
 	for modelName, ratioMap := range differences {
 		for ratioType, item := range ratioMap {
 			for chName := range item.Upstreams {
@@ -695,11 +777,24 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	return differences
 }
 
+// roundRatioValue 将倍率值统一四舍五入到 6 位小数。
+// 参数：
+//   - value：原始倍率值。
+//
+// 返回：
+//   - float64：规范化后的倍率值。
 func roundRatioValue(value float64) float64 {
 	return math.Round(value*1e6) / 1e6
 }
 
+// isModelsDevAPIEndpoint 判断给定 URL 是否指向 models.dev 的标准价格接口。
+// 参数：
+//   - rawURL：待判断的 URL。
+//
+// 返回：
+//   - bool：true 表示该 URL 为 models.dev `/api.json` 接口。
 func isModelsDevAPIEndpoint(rawURL string) bool {
+	// 解析 URL，并同时校验 host 与 path 是否符合预期。
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return false
@@ -721,7 +816,14 @@ func isModelsDevAPIEndpoint(rawURL string) bool {
 //	since 1 ratio unit = $0.002/1K tokens and USD=500, the factor is 500_000
 //
 // completion_ratio = completion_price / prompt_price (output/input multiplier)
+// 参数：
+//   - reader：OpenRouter `/v1/models` 响应体读取器。
+//
+// 返回：
+//   - map[string]any：转换后的本地倍率结构。
+//   - error：解析或转换失败时返回错误。
 func convertOpenRouterToRatioData(reader io.Reader) (map[string]any, error) {
+	// 先按 OpenRouter 的模型列表格式解析响应体。
 	var orResp struct {
 		Data []struct {
 			ID      string `json:"id"`
@@ -737,10 +839,12 @@ func convertOpenRouterToRatioData(reader io.Reader) (map[string]any, error) {
 		return nil, fmt.Errorf("failed to decode OpenRouter response: %w", err)
 	}
 
+	// 为不同倍率字段准备转换结果 map。
 	modelRatioMap := make(map[string]any)
 	completionRatioMap := make(map[string]any)
 	cacheRatioMap := make(map[string]any)
 
+	// 遍历每个模型，把 prompt/completion/cache 定价转换成本地倍率语义。
 	for _, m := range orResp.Data {
 		promptPrice, promptErr := strconv.ParseFloat(m.Pricing.Prompt, 64)
 		completionPrice, compErr := strconv.ParseFloat(m.Pricing.Completion, 64)
@@ -792,6 +896,7 @@ func convertOpenRouterToRatioData(reader io.Reader) (map[string]any, error) {
 		}
 	}
 
+	// 仅在对应字段存在数据时才写入返回结构。
 	converted := make(map[string]any)
 	if len(modelRatioMap) > 0 {
 		converted["model_ratio"] = modelRatioMap
@@ -806,27 +911,37 @@ func convertOpenRouterToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+// modelsDevProvider 表示 models.dev 响应中单个 provider 节点的数据结构。
 type modelsDevProvider struct {
-	Models map[string]modelsDevModel `json:"models"`
+	Models map[string]modelsDevModel `json:"models"` // provider 下按模型名组织的价格数据。
 }
 
+// modelsDevModel 表示 models.dev 中单个模型的数据结构。
 type modelsDevModel struct {
-	Cost modelsDevCost `json:"cost"`
+	Cost modelsDevCost `json:"cost"` // 模型价格信息。
 }
 
+// modelsDevCost 表示 models.dev 中一个模型的输入、输出和缓存价格。
 type modelsDevCost struct {
-	Input     *float64 `json:"input"`
-	Output    *float64 `json:"output"`
-	CacheRead *float64 `json:"cache_read"`
+	Input     *float64 `json:"input"`      // 输入价格，单位为 USD / 1M tokens。
+	Output    *float64 `json:"output"`     // 输出价格，单位为 USD / 1M tokens。
+	CacheRead *float64 `json:"cache_read"` // 缓存读取价格，单位为 USD / 1M tokens。
 }
 
+// modelsDevCandidate 表示某个 provider 为某个模型提供的一条候选价格记录。
 type modelsDevCandidate struct {
-	Provider  string
-	Input     float64
-	Output    *float64
-	CacheRead *float64
+	Provider  string   // 候选数据来源的 provider 名称。
+	Input     float64  // 输入价格。
+	Output    *float64 // 输出价格。
+	CacheRead *float64 // 缓存读取价格。
 }
 
+// cloneFloatPtr 复制一个 float64 指针，避免复用原始内存引用。
+// 参数：
+//   - v：待复制的浮点指针。
+//
+// 返回：
+//   - *float64：复制后的新指针；原值为 nil 时返回 nil。
 func cloneFloatPtr(v *float64) *float64 {
 	if v == nil {
 		return nil
@@ -835,6 +950,12 @@ func cloneFloatPtr(v *float64) *float64 {
 	return &out
 }
 
+// isValidNonNegativeCost 判断价格值是否为合法的非负有限数。
+// 参数：
+//   - v：待校验价格值。
+//
+// 返回：
+//   - bool：true 表示价格值合法可用。
 func isValidNonNegativeCost(v float64) bool {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return false
@@ -842,16 +963,27 @@ func isValidNonNegativeCost(v float64) bool {
 	return v >= 0
 }
 
+// buildModelsDevCandidate 将 models.dev 的成本结构转换为内部候选记录。
+// 参数：
+//   - provider：当前 provider 名称。
+//   - cost：原始成本结构。
+//
+// 返回：
+//   - modelsDevCandidate：转换后的候选数据。
+//   - bool：true 表示该候选价格有效可参与后续选择。
 func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCandidate, bool) {
+	// 输入价格缺失时无法建立本地倍率基线。
 	if cost.Input == nil {
 		return modelsDevCandidate{}, false
 	}
 
+	// 先验证输入价格本身是否合法。
 	input := *cost.Input
 	if !isValidNonNegativeCost(input) {
 		return modelsDevCandidate{}, false
 	}
 
+	// 输出价格存在时也需要通过合法性校验。
 	var output *float64
 	if cost.Output != nil {
 		if !isValidNonNegativeCost(*cost.Output) {
@@ -865,6 +997,7 @@ func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCand
 		return modelsDevCandidate{}, false
 	}
 
+	// 缓存读取价格是可选项，只有在合法时才保留。
 	var cacheRead *float64
 	if cost.CacheRead != nil && isValidNonNegativeCost(*cost.CacheRead) {
 		cacheRead = cloneFloatPtr(cost.CacheRead)
@@ -878,7 +1011,15 @@ func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCand
 	}, true
 }
 
+// shouldReplaceModelsDevCandidate 判断新的候选记录是否应替换当前已选记录。
+// 参数：
+//   - current：当前已选候选。
+//   - next：新的候选。
+//
+// 返回：
+//   - bool：true 表示应使用 next 替换 current。
 func shouldReplaceModelsDevCandidate(current, next modelsDevCandidate) bool {
+	// 优先选择非零价格；若都非零，则选择更便宜的输入价格；最后按 provider 名称稳定排序。
 	currentNonZero := current.Input > 0
 	nextNonZero := next.Input > 0
 	if currentNonZero != nextNonZero {
@@ -903,7 +1044,14 @@ func shouldReplaceModelsDevCandidate(current, next modelsDevCandidate) bool {
 // Duplicate model keys across providers are resolved by selecting the
 // cheapest non-zero input cost. If only zero-priced candidates exist,
 // a zero ratio is kept.
+// 参数：
+//   - reader：models.dev `/api.json` 响应体读取器。
+//
+// 返回：
+//   - map[string]any：转换后的本地倍率结构。
+//   - error：解析或转换失败时返回错误。
 func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
+	// 先把 models.dev 的 provider-map 响应整体解析出来。
 	var upstreamData map[string]modelsDevProvider
 	if err := common.DecodeJson(reader, &upstreamData); err != nil {
 		return nil, fmt.Errorf("failed to decode models.dev response: %w", err)
@@ -912,12 +1060,14 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		return nil, fmt.Errorf("empty models.dev response")
 	}
 
+	// 对 provider 名称排序，确保多 provider 冲突处理结果稳定可复现。
 	providers := make([]string, 0, len(upstreamData))
 	for provider := range upstreamData {
 		providers = append(providers, provider)
 	}
 	sort.Strings(providers)
 
+	// 遍历所有 provider/模型，选出每个模型最合适的一条候选价格。
 	selectedCandidates := make(map[string]modelsDevCandidate)
 	for _, provider := range providers {
 		providerData := upstreamData[provider]
@@ -947,6 +1097,7 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		return nil, fmt.Errorf("no valid models.dev pricing entries found")
 	}
 
+	// 把最终选中的候选价格转换为本地倍率、输出倍率和缓存倍率。
 	modelRatioMap := make(map[string]any)
 	completionRatioMap := make(map[string]any)
 	cacheRatioMap := make(map[string]any)
@@ -971,6 +1122,7 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		}
 	}
 
+	// 仅在存在对应数据时才写入返回结构。
 	converted := make(map[string]any)
 	if len(modelRatioMap) > 0 {
 		converted["model_ratio"] = modelRatioMap
@@ -984,7 +1136,11 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+// GetSyncableChannels 获取可参与倍率同步的渠道和内置预设来源列表。
+// 参数：
+//   - c：当前请求上下文，用于返回可同步渠道列表。
 func GetSyncableChannels(c *gin.Context) {
+	// 读取全部渠道，并保留具有 base URL 的渠道作为可同步来源。
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -994,6 +1150,7 @@ func GetSyncableChannels(c *gin.Context) {
 		return
 	}
 
+	// 将数据库渠道映射为前端使用的可同步渠道结构。
 	var syncableChannels []dto.SyncableChannel
 	for _, channel := range channels {
 		if channel.GetBaseURL() != "" {
@@ -1007,6 +1164,7 @@ func GetSyncableChannels(c *gin.Context) {
 		}
 	}
 
+	// 附加官方倍率预设来源。
 	syncableChannels = append(syncableChannels, dto.SyncableChannel{
 		ID:      officialRatioPresetID,
 		Name:    officialRatioPresetName,
@@ -1014,6 +1172,7 @@ func GetSyncableChannels(c *gin.Context) {
 		Status:  1,
 	})
 
+	// 附加 models.dev 价格预设来源。
 	syncableChannels = append(syncableChannels, dto.SyncableChannel{
 		ID:      modelsDevPresetID,
 		Name:    modelsDevPresetName,
@@ -1021,6 +1180,7 @@ func GetSyncableChannels(c *gin.Context) {
 		Status:  1,
 	})
 
+	// 返回可同步渠道与预设来源列表。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

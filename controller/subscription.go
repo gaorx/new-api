@@ -28,6 +28,7 @@ type SubscriptionBalancePayRequest struct {
 
 // ---- User APIs ----
 
+// GetSubscriptionPlans 获取当前可购买的启用订阅套餐列表。
 func GetSubscriptionPlans(c *gin.Context) {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiSuccess(c, []SubscriptionPlanDTO{})
@@ -49,6 +50,7 @@ func GetSubscriptionPlans(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+// GetSubscriptionSelf 获取当前登录用户的订阅摘要和计费偏好。
 func GetSubscriptionSelf(c *gin.Context) {
 	userId := c.GetInt("id")
 	settingMap, _ := model.GetUserSetting(userId, false)
@@ -73,6 +75,7 @@ func GetSubscriptionSelf(c *gin.Context) {
 	})
 }
 
+// UpdateSubscriptionPreference 更新当前用户的订阅计费偏好。
 func UpdateSubscriptionPreference(c *gin.Context) {
 	userId := c.GetInt("id")
 	var req BillingPreferenceRequest
@@ -97,6 +100,7 @@ func UpdateSubscriptionPreference(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"billing_preference": pref})
 }
 
+// SubscriptionRequestBalancePay 使用账户余额直接购买订阅套餐。
 func SubscriptionRequestBalancePay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -118,6 +122,7 @@ func SubscriptionRequestBalancePay(c *gin.Context) {
 
 // ---- Admin APIs ----
 
+// AdminListSubscriptionPlans 返回管理端可见的全部订阅套餐列表。
 func AdminListSubscriptionPlans(c *gin.Context) {
 	var plans []model.SubscriptionPlan
 	if err := model.DB.Order("sort_order desc, id desc").Find(&plans).Error; err != nil {
@@ -138,6 +143,7 @@ type AdminUpsertSubscriptionPlanRequest struct {
 	Plan model.SubscriptionPlan `json:"plan"`
 }
 
+// AdminCreateSubscriptionPlan 创建新的订阅套餐。
 func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -203,6 +209,7 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	common.ApiSuccess(c, req.Plan)
 }
 
+// AdminUpdateSubscriptionPlan 更新已有订阅套餐。
 func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -304,6 +311,7 @@ type AdminUpdateSubscriptionPlanStatusRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// AdminUpdateSubscriptionPlanStatus 单独更新订阅套餐的启用状态。
 func AdminUpdateSubscriptionPlanStatus(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -332,6 +340,7 @@ type AdminBindSubscriptionRequest struct {
 	PlanId int `json:"plan_id"`
 }
 
+// AdminBindSubscription 管理员直接为用户绑定订阅套餐。
 func AdminBindSubscription(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -356,6 +365,7 @@ func AdminBindSubscription(c *gin.Context) {
 
 // ---- Admin: user subscription management ----
 
+// AdminListUserSubscriptions 获取指定用户的全部订阅记录。
 func AdminListUserSubscriptions(c *gin.Context) {
 	userId, _ := strconv.Atoi(c.Param("id"))
 	if userId <= 0 {
@@ -403,6 +413,8 @@ func AdminCreateUserSubscription(c *gin.Context) {
 }
 
 // AdminInvalidateUserSubscription cancels a user subscription immediately.
+// 参数：
+//   - c：当前请求上下文，用于读取订阅 ID 并执行立即失效。
 func AdminInvalidateUserSubscription(c *gin.Context) {
 	subId, _ := strconv.Atoi(c.Param("id"))
 	if subId <= 0 {
@@ -422,6 +434,8 @@ func AdminInvalidateUserSubscription(c *gin.Context) {
 }
 
 // AdminDeleteUserSubscription hard-deletes a user subscription.
+// 参数：
+//   - c：当前请求上下文，用于读取订阅 ID 并执行硬删除。
 func AdminDeleteUserSubscription(c *gin.Context) {
 	subId, _ := strconv.Atoi(c.Param("id"))
 	if subId <= 0 {

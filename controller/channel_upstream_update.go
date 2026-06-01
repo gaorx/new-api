@@ -23,15 +23,16 @@ import (
 )
 
 const (
-	channelUpstreamModelUpdateTaskDefaultIntervalMinutes  = 30
-	channelUpstreamModelUpdateTaskBatchSize               = 100
-	channelUpstreamModelUpdateMinCheckIntervalSeconds     = 300
-	channelUpstreamModelUpdateNotifySuppressWindowSeconds = 86400
-	channelUpstreamModelUpdateNotifyMaxChannelDetails     = 8
-	channelUpstreamModelUpdateNotifyMaxModelDetails       = 12
-	channelUpstreamModelUpdateNotifyMaxFailedChannelIDs   = 10
+	channelUpstreamModelUpdateTaskDefaultIntervalMinutes  = 30    // 后台巡检任务的默认执行间隔，单位分钟。
+	channelUpstreamModelUpdateTaskBatchSize               = 100   // 单批次扫描渠道数量上限。
+	channelUpstreamModelUpdateMinCheckIntervalSeconds     = 300   // 单渠道最小重复检查间隔，单位秒。
+	channelUpstreamModelUpdateNotifySuppressWindowSeconds = 86400 // 相同摘要通知的抑制窗口，单位秒。
+	channelUpstreamModelUpdateNotifyMaxChannelDetails     = 8     // 通知中展示的变更渠道明细上限。
+	channelUpstreamModelUpdateNotifyMaxModelDetails       = 12    // 通知中展示的模型样例上限。
+	channelUpstreamModelUpdateNotifyMaxFailedChannelIDs   = 10    // 通知中展示的失败渠道 ID 上限。
 )
 
+// channelUpstreamModelUpdateSelectFields 是巡检任务从数据库读取渠道时的精简字段列表。
 var channelUpstreamModelUpdateSelectFields = []string{
 	"id",
 	"name",
@@ -53,55 +54,68 @@ var channelUpstreamModelUpdateSelectFields = []string{
 }
 
 var (
-	channelUpstreamModelUpdateTaskOnce    sync.Once
-	channelUpstreamModelUpdateTaskRunning atomic.Bool
+	channelUpstreamModelUpdateTaskOnce    sync.Once   // 保证后台巡检任务只会启动一次。
+	channelUpstreamModelUpdateTaskRunning atomic.Bool // 标记巡检任务当前是否正在执行中。
 	channelUpstreamModelUpdateNotifyState = struct {
-		sync.Mutex
-		lastNotifiedAt      int64
-		lastChangedChannels int
-		lastFailedChannels  int
-	}{}
+		sync.Mutex              // 保护通知状态的并发访问。
+		lastNotifiedAt      int64 // 上一次发送通知的时间戳。
+		lastChangedChannels int   // 上一次通知时的变更渠道数量。
+		lastFailedChannels  int   // 上一次通知时的失败渠道数量。
+	}{} // 用于抑制重复通知的进程内状态。
 )
 
+// applyChannelUpstreamModelUpdatesRequest 表示手动应用单渠道上游模型变更的请求体。
 type applyChannelUpstreamModelUpdatesRequest struct {
-	ID           int      `json:"id"`
-	AddModels    []string `json:"add_models"`
-	RemoveModels []string `json:"remove_models"`
-	IgnoreModels []string `json:"ignore_models"`
+	ID           int      `json:"id"`            // 目标渠道 ID。
+	AddModels    []string `json:"add_models"`    // 希望加入的模型列表。
+	RemoveModels []string `json:"remove_models"` // 希望移除的模型列表。
+	IgnoreModels []string `json:"ignore_models"` // 希望忽略的模型列表。
 }
 
+// applyAllChannelUpstreamModelUpdatesResult 表示批量应用上游模型变更后的单渠道结果。
 type applyAllChannelUpstreamModelUpdatesResult struct {
-	ChannelID             int      `json:"channel_id"`
-	ChannelName           string   `json:"channel_name"`
-	AddedModels           []string `json:"added_models"`
-	RemovedModels         []string `json:"removed_models"`
-	RemainingModels       []string `json:"remaining_models"`
-	RemainingRemoveModels []string `json:"remaining_remove_models"`
+	ChannelID             int      `json:"channel_id"`              // 渠道 ID。
+	ChannelName           string   `json:"channel_name"`            // 渠道名称。
+	AddedModels           []string `json:"added_models"`            // 本次实际新增的模型。
+	RemovedModels         []string `json:"removed_models"`          // 本次实际移除的模型。
+	RemainingModels       []string `json:"remaining_models"`        // 应用完成后保留的模型列表。
+	RemainingRemoveModels []string `json:"remaining_remove_models"` // 尚未处理的待移除模型。
 }
 
+// detectChannelUpstreamModelUpdatesResult 表示单渠道巡检出的上游模型差异结果。
 type detectChannelUpstreamModelUpdatesResult struct {
-	ChannelID       int      `json:"channel_id"`
-	ChannelName     string   `json:"channel_name"`
-	AddModels       []string `json:"add_models"`
-	RemoveModels    []string `json:"remove_models"`
-	LastCheckTime   int64    `json:"last_check_time"`
-	AutoAddedModels int      `json:"auto_added_models"`
+	ChannelID       int      `json:"channel_id"`        // 渠道 ID。
+	ChannelName     string   `json:"channel_name"`      // 渠道名称。
+	AddModels       []string `json:"add_models"`        // 待新增模型列表。
+	RemoveModels    []string `json:"remove_models"`     // 待移除模型列表。
+	LastCheckTime   int64    `json:"last_check_time"`   // 最近一次检测时间。
+	AutoAddedModels int      `json:"auto_added_models"` // 本轮被自动同步新增的模型数量。
 }
 
+// upstreamModelUpdateChannelSummary 是通知摘要里用于展示单渠道变更数量的简化结构。
 type upstreamModelUpdateChannelSummary struct {
-	ChannelName string
-	AddCount    int
-	RemoveCount int
+	ChannelName string // 渠道名称。
+	AddCount    int    // 待新增模型数量。
+	RemoveCount int    // 待删除模型数量。
 }
 
+// normalizeModelNames 对模型名列表做去空格、去空字符串、去重的标准化处理。
+// 参数：
+//   - models：原始模型名切片。
+//
+// 返回：
+//   - []string：清洗后的模型名列表。
 func normalizeModelNames(models []string) []string {
+	// 使用 FilterMap 一次性完成裁剪和空值过滤，再做唯一化处理。
 	return lo.Uniq(lo.FilterMap(models, func(model string, _ int) (string, bool) {
 		trimmed := strings.TrimSpace(model)
 		return trimmed, trimmed != ""
 	}))
 }
 
+// mergeModelNames 将新增模型合并进已有模型列表，并保证顺序稳定且无重复。
 func mergeModelNames(base []string, appended []string) []string {
+	// 先对基础列表做标准化，再构建集合以便高效判断重复项。
 	merged := normalizeModelNames(base)
 	seen := make(map[string]struct{}, len(merged))
 	for _, model := range merged {
@@ -117,7 +131,9 @@ func mergeModelNames(base []string, appended []string) []string {
 	return merged
 }
 
+// subtractModelNames 从基础模型列表中移除指定模型集合。
 func subtractModelNames(base []string, removed []string) []string {
+	// 先构建待移除集合，再过滤基础模型列表。
 	removeSet := make(map[string]struct{}, len(removed))
 	for _, model := range normalizeModelNames(removed) {
 		removeSet[model] = struct{}{}
@@ -128,7 +144,9 @@ func subtractModelNames(base []string, removed []string) []string {
 	})
 }
 
+// intersectModelNames 返回同时出现在 base 和 allowed 中的模型列表。
 func intersectModelNames(base []string, allowed []string) []string {
+	// 构建允许集合后，对基础列表做交集过滤。
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, model := range normalizeModelNames(allowed) {
 		allowedSet[model] = struct{}{}
@@ -139,14 +157,18 @@ func intersectModelNames(base []string, allowed []string) []string {
 	})
 }
 
+// applySelectedModelChanges 根据新增和移除选择结果生成最终模型列表。
 func applySelectedModelChanges(originModels []string, addModels []string, removeModels []string) []string {
 	// Add wins when the same model appears in both selected lists.
+	// 先保证新增列表优先级更高，再依次做合并和移除。
 	normalizedAdd := normalizeModelNames(addModels)
 	normalizedRemove := subtractModelNames(normalizeModelNames(removeModels), normalizedAdd)
 	return subtractModelNames(mergeModelNames(originModels, normalizedAdd), normalizedRemove)
 }
 
+// normalizeChannelModelMapping 解析并清洗渠道上的模型映射配置。
 func normalizeChannelModelMapping(channel *model.Channel) map[string]string {
+	// 空渠道或空映射时直接返回 nil，表示没有可用映射关系。
 	if channel == nil || channel.ModelMapping == nil {
 		return nil
 	}
@@ -158,6 +180,8 @@ func normalizeChannelModelMapping(channel *model.Channel) map[string]string {
 	if err := common.UnmarshalJsonStr(rawMapping, &parsed); err != nil {
 		return nil
 	}
+
+	// 对源模型名和目标模型名统一做裁剪，过滤掉非法空映射项。
 	normalized := make(map[string]string, len(parsed))
 	for source, target := range parsed {
 		normalizedSource := strings.TrimSpace(source)
@@ -173,12 +197,14 @@ func normalizeChannelModelMapping(channel *model.Channel) map[string]string {
 	return normalized
 }
 
+// collectPendingUpstreamModelChangesFromModels 仅基于模型列表和配置计算待新增/待移除模型。
 func collectPendingUpstreamModelChangesFromModels(
 	localModels []string,
 	upstreamModels []string,
 	ignoredModels []string,
 	modelMapping map[string]string,
 ) (pendingAddModels []string, pendingRemoveModels []string) {
+	// 先把本地与上游模型列表都标准化，并构建集合以便后续快速比较。
 	localSet := make(map[string]struct{})
 	localModels = normalizeModelNames(localModels)
 	upstreamModels = normalizeModelNames(upstreamModels)
@@ -190,8 +216,10 @@ func collectPendingUpstreamModelChangesFromModels(
 		upstreamSet[modelName] = struct{}{}
 	}
 
+	// 忽略规则也统一做标准化，后续新增判断时会用到。
 	normalizedIgnoredModels := normalizeModelNames(ignoredModels)
 
+	// 模型映射里的 source/target 需要特殊处理，避免把别名当成真实缺失模型。
 	redirectSourceSet := make(map[string]struct{}, len(modelMapping))
 	redirectTargetSet := make(map[string]struct{}, len(modelMapping))
 	for source, target := range modelMapping {
@@ -207,6 +235,7 @@ func collectPendingUpstreamModelChangesFromModels(
 		coveredUpstreamSet[modelName] = struct{}{}
 	}
 
+	// 计算待新增模型：上游有、本地没有、且不被忽略规则覆盖。
 	pendingAdd := lo.Filter(upstreamModels, func(modelName string, _ int) bool {
 		if _, ok := coveredUpstreamSet[modelName]; ok {
 			return false
@@ -222,6 +251,8 @@ func collectPendingUpstreamModelChangesFromModels(
 		}
 		return true
 	})
+
+	// 计算待移除模型：本地有、上游无，但虚拟别名 source 不参与移除判断。
 	pendingRemove := lo.Filter(localModels, func(modelName string, _ int) bool {
 		// Redirect source models are virtual aliases and should not be removed
 		// only because they are absent from upstream model list.
@@ -234,7 +265,9 @@ func collectPendingUpstreamModelChangesFromModels(
 	return normalizeModelNames(pendingAdd), normalizeModelNames(pendingRemove)
 }
 
+// collectPendingUpstreamModelChanges 基于真实渠道配置拉取上游模型后，计算待同步差异。
 func collectPendingUpstreamModelChanges(channel *model.Channel, settings dto.ChannelOtherSettings) (pendingAddModels []string, pendingRemoveModels []string, err error) {
+	// 先实时拉取上游模型列表，再与本地模型配置做差异比对。
 	upstreamModels, err := fetchChannelUpstreamModelIDs(channel)
 	if err != nil {
 		return nil, nil, err
@@ -248,7 +281,9 @@ func collectPendingUpstreamModelChanges(channel *model.Channel, settings dto.Cha
 	return pendingAddModels, pendingRemoveModels, nil
 }
 
+// getUpstreamModelUpdateMinCheckIntervalSeconds 返回单渠道最小重复检查间隔。
 func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
+	// 优先读取环境变量覆盖值，并对非法负数做回退保护。
 	interval := int64(common.GetEnvOrDefault(
 		"CHANNEL_UPSTREAM_MODEL_UPDATE_MIN_CHECK_INTERVAL_SECONDS",
 		channelUpstreamModelUpdateMinCheckIntervalSeconds,
@@ -259,12 +294,15 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 	return interval
 }
 
+// fetchChannelUpstreamModelIDs 从不同类型上游渠道拉取当前可用模型 ID 列表。
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
+	// 先确定用于请求的基础地址；未自定义时回退到渠道类型默认地址。
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()
 	}
 
+	// Ollama 走专用模型查询接口，并处理多行 key 场景。
 	if channel.Type == constant.ChannelTypeOllama {
 		key := strings.TrimSpace(strings.Split(channel.Key, "\n")[0])
 		models, err := ollama.FetchOllamaModels(baseURL, key)
@@ -276,6 +314,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		})), nil
 	}
 
+	// Gemini 需要通过渠道多 key 选择逻辑拿到当前可用密钥，再访问专用模型接口。
 	if channel.Type == constant.ChannelTypeGemini {
 		key, _, apiErr := channel.GetNextEnabledKey()
 		if apiErr != nil {
@@ -289,6 +328,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return normalizeModelNames(models), nil
 	}
 
+	// 其余 OpenAI 兼容渠道按类型差异拼接模型查询 URL。
 	var url string
 	switch channel.Type {
 	case constant.ChannelTypeAli:
@@ -321,6 +361,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 	key = strings.TrimSpace(key)
 
+	// 构建请求头并发起模型列表请求。
 	headers, err := buildFetchModelsHeaders(channel, key)
 	if err != nil {
 		return nil, err
@@ -336,6 +377,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return nil, err
 	}
 
+	// 统一提取模型 ID；Gemini 需要去掉 models/ 前缀。
 	ids := lo.Map(result.Data, func(item OpenAIModel, _ int) string {
 		if channel.Type == constant.ChannelTypeGemini {
 			return strings.TrimPrefix(item.ID, "models/")
@@ -346,7 +388,9 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	return normalizeModelNames(ids), nil
 }
 
+// updateChannelUpstreamModelSettings 把巡检相关设置和可选模型列表同步回数据库。
 func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.ChannelOtherSettings, updateModels bool) error {
+	// 先把 settings 写回渠道对象，再按需决定是否同时更新 models 字段。
 	channel.SetOtherSettings(settings)
 	updates := map[string]interface{}{
 		"settings": channel.OtherSettings,
@@ -357,12 +401,14 @@ func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.Cha
 	return model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
 }
 
+// checkAndPersistChannelUpstreamModelUpdates 执行单渠道上游模型巡检，并按策略写回检测结果。
 func checkAndPersistChannelUpstreamModelUpdates(
 	channel *model.Channel,
 	settings *dto.ChannelOtherSettings,
 	force bool,
 	allowAutoApply bool,
 ) (modelsChanged bool, autoAdded int, err error) {
+	// 非强制模式下先检查最小巡检间隔，避免过于频繁地打上游接口。
 	now := common.GetTimestamp()
 	if !force {
 		minInterval := getUpstreamModelUpdateMinCheckIntervalSeconds()
@@ -372,6 +418,7 @@ func checkAndPersistChannelUpstreamModelUpdates(
 		}
 	}
 
+	// 计算当前渠道待新增/待移除模型，并无论成功失败都更新最近检查时间。
 	pendingAddModels, pendingRemoveModels, fetchErr := collectPendingUpstreamModelChanges(channel, *settings)
 	settings.UpstreamModelUpdateLastCheckTime = now
 	if fetchErr != nil {
@@ -381,6 +428,7 @@ func checkAndPersistChannelUpstreamModelUpdates(
 		return false, 0, fetchErr
 	}
 
+	// 如果允许自动应用且开启了自动同步，则把新增模型直接并入当前渠道模型列表。
 	if allowAutoApply && settings.UpstreamModelUpdateAutoSyncEnabled && len(pendingAddModels) > 0 {
 		originModels := normalizeModelNames(channel.GetModels())
 		mergedModels := mergeModelNames(originModels, pendingAddModels)
@@ -395,6 +443,7 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	}
 	settings.UpstreamModelUpdateLastRemovedModels = pendingRemoveModels
 
+	// 把检测结果写回数据库；如果模型列表已变更，还需要同步更新 abilities。
 	if err = updateChannelUpstreamModelSettings(channel, *settings, modelsChanged); err != nil {
 		return false, autoAdded, err
 	}
@@ -406,7 +455,9 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	return modelsChanged, autoAdded, nil
 }
 
+// refreshChannelRuntimeCache 刷新渠道运行时缓存和代理客户端缓存。
 func refreshChannelRuntimeCache() {
+	// 内存缓存开启时重新初始化渠道缓存，并捕获 panic 防止后台任务崩掉。
 	if common.MemoryCacheEnabled {
 		func() {
 			defer func() {
@@ -417,6 +468,8 @@ func refreshChannelRuntimeCache() {
 			model.InitChannelCache()
 		}()
 	}
+
+	// 无论内存缓存是否启用，都重置代理客户端缓存以加载最新配置。
 	service.ResetProxyClientCache()
 }
 

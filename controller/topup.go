@@ -21,6 +21,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// GetTopUpInfo 获取充值相关公开配置和充值入口状态。
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
@@ -123,15 +124,18 @@ func GetTopUpInfo(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+// EpayRequest 表示易支付充值请求体。
 type EpayRequest struct {
 	Amount        int64  `json:"amount"`
 	PaymentMethod string `json:"payment_method"`
 }
 
+// AmountRequest 表示仅计算充值金额的请求体。
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
 }
 
+// GetEpayClient 创建并返回易支付客户端。
 func GetEpayClient() *epay.Client {
 	if operation_setting.PayAddress == "" || operation_setting.EpayId == "" || operation_setting.EpayKey == "" {
 		return nil
@@ -146,6 +150,7 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
+// getPayMoney 根据充值额度和分组计算实际支付金额。
 func getPayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
@@ -176,6 +181,7 @@ func getPayMoney(amount int64, group string) float64 {
 	return payMoney.InexactFloat64()
 }
 
+// getMinTopup 获取系统允许的最小充值额度。
 func getMinTopup() int64 {
 	minTopup := operation_setting.MinTopUp
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -186,6 +192,7 @@ func getMinTopup() int64 {
 	return int64(minTopup)
 }
 
+// RequestEpay 发起易支付充值流程。
 func RequestEpay(c *gin.Context) {
 	var req EpayRequest
 	err := c.ShouldBindJSON(&req)
@@ -270,12 +277,14 @@ var orderLocks sync.Map
 var createLock sync.Mutex
 
 // refCountedMutex 带引用计数的互斥锁，确保最后一个使用者才从 map 中删除
+// refCountedMutex 表示带引用计数的订单互斥锁。
 type refCountedMutex struct {
 	mu       sync.Mutex
 	refCount int
 }
 
 // LockOrder 尝试对给定订单号加锁
+// LockOrder 为指定订单号加锁，避免重复回调并发处理。
 func LockOrder(tradeNo string) {
 	createLock.Lock()
 	var rcm *refCountedMutex
@@ -291,6 +300,7 @@ func LockOrder(tradeNo string) {
 }
 
 // UnlockOrder 释放给定订单号的锁
+// UnlockOrder 释放指定订单号的互斥锁。
 func UnlockOrder(tradeNo string) {
 	v, ok := orderLocks.Load(tradeNo)
 	if !ok {
@@ -307,6 +317,7 @@ func UnlockOrder(tradeNo string) {
 	createLock.Unlock()
 }
 
+// EpayNotify 处理易支付充值异步通知。
 func EpayNotify(c *gin.Context) {
 	if !isEpayWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -411,6 +422,7 @@ func EpayNotify(c *gin.Context) {
 	}
 }
 
+// RequestAmount 仅计算某次充值请求对应的支付金额。
 func RequestAmount(c *gin.Context) {
 	var req AmountRequest
 	err := c.ShouldBindJSON(&req)
@@ -437,6 +449,7 @@ func RequestAmount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
 }
 
+// GetUserTopUps 分页获取当前用户自己的充值记录。
 func GetUserTopUps(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -463,6 +476,7 @@ func GetUserTopUps(c *gin.Context) {
 }
 
 // GetAllTopUps 管理员获取全平台充值记录
+// GetAllTopUps 分页获取全站充值记录。
 func GetAllTopUps(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	keyword := c.Query("keyword")
@@ -487,11 +501,13 @@ func GetAllTopUps(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// AdminCompleteTopupRequest 表示管理员手动完成充值订单的请求体。
 type AdminCompleteTopupRequest struct {
 	TradeNo string `json:"trade_no"`
 }
 
 // AdminCompleteTopUp 管理员补单接口
+// AdminCompleteTopUp 管理员手动把某笔充值订单标记为完成。
 func AdminCompleteTopUp(c *gin.Context) {
 	var req AdminCompleteTopupRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" {

@@ -22,6 +22,7 @@ import (
 	"github.com/waffo-com/waffo-go/types/order"
 )
 
+// getWaffoSDK 创建并返回 Waffo SDK 实例。
 func getWaffoSDK() (*waffo.Waffo, error) {
 	env := config.Sandbox
 	apiKey := setting.WaffoSandboxApiKey
@@ -48,10 +49,12 @@ func getWaffoSDK() (*waffo.Waffo, error) {
 	return waffo.New(cfg), nil
 }
 
+// getWaffoUserEmail 获取 Waffo 支付时使用的用户邮箱。
 func getWaffoUserEmail(user *model.User) string {
 	return fmt.Sprintf("%d@examples.com", user.Id)
 }
 
+// getWaffoCurrency 获取当前 Waffo 支付币种。
 func getWaffoCurrency() string {
 	if setting.WaffoCurrency != "" {
 		return setting.WaffoCurrency
@@ -64,6 +67,7 @@ var zeroDecimalCurrencies = map[string]bool{
 	"IDR": true, "JPY": true, "KRW": true, "VND": true,
 }
 
+// formatWaffoAmount 格式化 Waffo 支付金额字符串。
 func formatWaffoAmount(amount float64, currency string) string {
 	if zeroDecimalCurrencies[currency] {
 		return fmt.Sprintf("%.0f", amount)
@@ -74,6 +78,7 @@ func formatWaffoAmount(amount float64, currency string) string {
 // getWaffoPayMoney converts the user-facing amount to USD for Waffo payment.
 // Waffo only accepts USD, so this function handles the conversion from different
 // display types (USD/CNY/TOKENS) to the actual USD amount to charge.
+// getWaffoPayMoney 根据充值额度和分组计算 Waffo 支付金额。
 func getWaffoPayMoney(amount float64, group string) float64 {
 	originalAmount := amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -92,6 +97,7 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount
 }
 
+// WaffoPayRequest 表示 Waffo 充值支付请求体。
 type WaffoPayRequest struct {
 	Amount         int64  `json:"amount"`
 	PayMethodIndex *int   `json:"pay_method_index"` // 服务端支付方式列表的索引，nil 表示由 Waffo 自动选择
@@ -99,6 +105,7 @@ type WaffoPayRequest struct {
 	PayMethodName  string `json:"pay_method_name"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
 }
 
+// RequestWaffoAmount 计算 Waffo 充值金额。
 func RequestWaffoAmount(c *gin.Context) {
 	var req WaffoPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -129,6 +136,7 @@ func RequestWaffoAmount(c *gin.Context) {
 }
 
 // RequestWaffoPay 创建 Waffo 支付订单
+// RequestWaffoPay 发起 Waffo 充值支付流程。
 func RequestWaffoPay(c *gin.Context) {
 	if !setting.WaffoEnabled {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "Waffo 支付未启用"})
@@ -300,6 +308,7 @@ func RequestWaffoPay(c *gin.Context) {
 }
 
 // webhookPayloadWithSubInfo 扩展 PAYMENT_NOTIFICATION，包含 SDK 未定义的 subscriptionInfo 字段
+// webhookPayloadWithSubInfo 表示带订阅信息的 Waffo Webhook 载荷。
 type webhookPayloadWithSubInfo struct {
 	EventType string `json:"eventType"`
 	Result    struct {
@@ -308,6 +317,7 @@ type webhookPayloadWithSubInfo struct {
 	} `json:"result"`
 }
 
+// webhookSubscriptionInfo 表示 Waffo Webhook 中的订阅信息结构。
 type webhookSubscriptionInfo struct {
 	Period              string `json:"period,omitempty"`
 	MerchantRequest     string `json:"merchantRequest,omitempty"`
@@ -316,6 +326,7 @@ type webhookSubscriptionInfo struct {
 }
 
 // WaffoWebhook 处理 Waffo 回调通知（支付/退款/订阅）
+// WaffoWebhook 处理 Waffo Webhook 回调。
 func WaffoWebhook(c *gin.Context) {
 	if !isWaffoWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -374,6 +385,7 @@ func WaffoWebhook(c *gin.Context) {
 }
 
 // handleWaffoPayment 处理支付完成通知
+// handleWaffoPayment 处理 Waffo 支付成功后的订单完成逻辑。
 func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.PaymentNotificationResult) {
 	if result.OrderStatus != "PAY_SUCCESS" {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 订单状态非成功，忽略充值 trade_no=%s order_status=%s client_ip=%s", result.MerchantOrderID, result.OrderStatus, c.ClientIP()))
@@ -405,6 +417,7 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 }
 
 // sendWaffoWebhookResponse 发送签名响应
+// sendWaffoWebhookResponse 统一返回 Waffo Webhook 响应。
 func sendWaffoWebhookResponse(c *gin.Context, wh *core.WebhookHandler, success bool, msg string) {
 	var body, sig string
 	if success {

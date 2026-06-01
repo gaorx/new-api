@@ -25,11 +25,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// LoginRequest 表示账号密码登录请求体。
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
+// Login 处理用户名密码登录流程。
 func Login(c *gin.Context) {
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordLoginDisabled)
@@ -91,6 +93,7 @@ func Login(c *gin.Context) {
 }
 
 // setup session & cookies and then return user info
+// setupLogin 为指定用户建立登录态并写入会话。
 func setupLogin(user *model.User, c *gin.Context) {
 	model.UpdateUserLastLoginAt(user.Id)
 	session := sessions.Default(c)
@@ -118,6 +121,7 @@ func setupLogin(user *model.User, c *gin.Context) {
 	})
 }
 
+// Logout 退出当前登录会话。
 func Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
@@ -135,6 +139,7 @@ func Logout(c *gin.Context) {
 	})
 }
 
+// Register 处理新用户注册流程。
 func Register(c *gin.Context) {
 	if !common.RegisterEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
@@ -233,6 +238,7 @@ func Register(c *gin.Context) {
 	return
 }
 
+// GetAllUsers 分页获取全站用户列表。
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	users, total, err := model.GetAllUsers(pageInfo)
@@ -248,6 +254,7 @@ func GetAllUsers(c *gin.Context) {
 	return
 }
 
+// SearchUsers 按关键字搜索用户列表。
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
@@ -276,10 +283,12 @@ func SearchUsers(c *gin.Context) {
 	return
 }
 
+// canManageTargetRole 判断当前角色是否有权管理目标角色。
 func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+// GetUser 获取指定用户详情。
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -304,6 +313,7 @@ func GetUser(c *gin.Context) {
 	return
 }
 
+// GenerateAccessToken 为当前用户生成新的 access token。
 func GenerateAccessToken(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -339,10 +349,12 @@ func GenerateAccessToken(c *gin.Context) {
 	return
 }
 
+// TransferAffQuotaRequest 表示转移邀请额度的请求体。
 type TransferAffQuotaRequest struct {
 	Quota int `json:"quota" binding:"required"`
 }
 
+// TransferAffQuota 转移邀请额度。
 func TransferAffQuota(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -367,6 +379,7 @@ func TransferAffQuota(c *gin.Context) {
 	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
 }
 
+// GetAffCode 获取当前用户的邀请码信息。
 func GetAffCode(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -392,6 +405,7 @@ func GetAffCode(c *gin.Context) {
 	return
 }
 
+// GetSelf 获取当前登录用户自己的资料和设置。
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")
@@ -447,6 +461,7 @@ func GetSelf(c *gin.Context) {
 }
 
 // 计算用户权限的辅助函数
+// calculateUserPermissions 计算某个角色对应的前端权限集合。
 func calculateUserPermissions(userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}
 
@@ -475,6 +490,7 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 }
 
 // 根据用户角色生成默认的边栏配置
+// generateDefaultSidebarConfig 生成某个角色默认的侧边栏配置。
 func generateDefaultSidebarConfig(userRole int) string {
 	defaultConfig := map[string]interface{}{}
 
@@ -536,6 +552,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 	return string(configBytes)
 }
 
+// GetUserModels 获取当前用户可用模型列表。
 func GetUserModels(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -563,6 +580,7 @@ func GetUserModels(c *gin.Context) {
 	return
 }
 
+// UpdateUser 管理员更新指定用户信息。
 func UpdateUser(c *gin.Context) {
 	var updatedUser model.User
 	err := json.NewDecoder(c.Request.Body).Decode(&updatedUser)
@@ -606,6 +624,7 @@ func UpdateUser(c *gin.Context) {
 	return
 }
 
+// AdminClearUserBinding 清理指定用户的第三方绑定信息。
 func AdminClearUserBinding(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -644,6 +663,7 @@ func AdminClearUserBinding(c *gin.Context) {
 	})
 }
 
+// UpdateSelf 更新当前登录用户自己的资料和设置。
 func UpdateSelf(c *gin.Context) {
 	var requestData map[string]interface{}
 	err := json.NewDecoder(c.Request.Body).Decode(&requestData)
@@ -756,6 +776,7 @@ func UpdateSelf(c *gin.Context) {
 	return
 }
 
+// checkUpdatePassword 校验并决定是否需要更新密码。
 func checkUpdatePassword(originalPassword string, newPassword string, userId int) (updatePassword bool, err error) {
 	var currentUser *model.User
 	currentUser, err = model.GetUserById(userId, true)
@@ -776,6 +797,7 @@ func checkUpdatePassword(originalPassword string, newPassword string, userId int
 	return
 }
 
+// DeleteUser 管理员删除指定用户。
 func DeleteUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -804,6 +826,7 @@ func DeleteUser(c *gin.Context) {
 	return
 }
 
+// DeleteSelf 删除当前登录用户自己的账号。
 func DeleteSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	user, _ := model.GetUserById(id, false)
@@ -825,6 +848,7 @@ func DeleteSelf(c *gin.Context) {
 	return
 }
 
+// CreateUser 管理员创建新用户。
 func CreateUser(c *gin.Context) {
 	var user model.User
 	err := json.NewDecoder(c.Request.Body).Decode(&user)
@@ -864,6 +888,7 @@ func CreateUser(c *gin.Context) {
 	return
 }
 
+// ManageRequest 表示管理员用户管理操作请求体。
 type ManageRequest struct {
 	Id     int    `json:"id"`
 	Action string `json:"action"`
@@ -872,6 +897,7 @@ type ManageRequest struct {
 }
 
 // ManageUser Only admin user can do this
+// ManageUser 执行管理员对用户的配额、状态等管理操作。
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&req)
@@ -1017,11 +1043,13 @@ func ManageUser(c *gin.Context) {
 	return
 }
 
+// emailBindRequest 表示邮箱绑定请求体。
 type emailBindRequest struct {
 	Email string `json:"email"`
 	Code  string `json:"code"`
 }
 
+// EmailBind 绑定邮箱到当前用户账号。
 func EmailBind(c *gin.Context) {
 	var req emailBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
@@ -1058,6 +1086,7 @@ func EmailBind(c *gin.Context) {
 	return
 }
 
+// topUpRequest 表示管理员为用户手动充值的请求体。
 type topUpRequest struct {
 	Key string `json:"key"`
 }
@@ -1065,14 +1094,17 @@ type topUpRequest struct {
 var topUpLocks sync.Map
 var topUpCreateLock sync.Mutex
 
+// topUpTryLock 表示用户级别的轻量尝试锁。
 type topUpTryLock struct {
 	ch chan struct{}
 }
 
+// newTopUpTryLock 创建一个新的用户充值尝试锁。
 func newTopUpTryLock() *topUpTryLock {
 	return &topUpTryLock{ch: make(chan struct{}, 1)}
 }
 
+// TryLock 尝试获取用户充值锁。
 func (l *topUpTryLock) TryLock() bool {
 	select {
 	case l.ch <- struct{}{}:
@@ -1082,6 +1114,7 @@ func (l *topUpTryLock) TryLock() bool {
 	}
 }
 
+// Unlock 释放用户充值锁。
 func (l *topUpTryLock) Unlock() {
 	select {
 	case <-l.ch:
@@ -1089,6 +1122,7 @@ func (l *topUpTryLock) Unlock() {
 	}
 }
 
+// getTopUpLock 获取某个用户的充值锁实例。
 func getTopUpLock(userID int) *topUpTryLock {
 	if v, ok := topUpLocks.Load(userID); ok {
 		return v.(*topUpTryLock)
@@ -1103,6 +1137,7 @@ func getTopUpLock(userID int) *topUpTryLock {
 	return l
 }
 
+// TopUp 管理员为指定用户手动充值额度。
 func TopUp(c *gin.Context) {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
@@ -1138,6 +1173,7 @@ func TopUp(c *gin.Context) {
 	})
 }
 
+// UpdateUserSettingRequest 表示更新用户设置的请求体。
 type UpdateUserSettingRequest struct {
 	QuotaWarningType                 string  `json:"notify_type"`
 	QuotaWarningThreshold            float64 `json:"quota_warning_threshold"`
@@ -1153,6 +1189,7 @@ type UpdateUserSettingRequest struct {
 	RecordIpLog                      bool    `json:"record_ip_log"`
 }
 
+// UpdateUserSetting 更新当前用户的个性化设置。
 func UpdateUserSetting(c *gin.Context) {
 	var req UpdateUserSettingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

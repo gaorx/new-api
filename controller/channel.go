@@ -22,36 +22,40 @@ import (
 	"gorm.io/gorm"
 )
 
+// OpenAIModel 表示 OpenAI 兼容模型列表接口中的单个模型对象。
 type OpenAIModel struct {
-	ID         string         `json:"id"`
-	Object     string         `json:"object"`
-	Created    int64          `json:"created"`
-	OwnedBy    string         `json:"owned_by"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
+	ID         string         `json:"id"`                 // 模型唯一标识。
+	Object     string         `json:"object"`             // 响应对象类型。
+	Created    int64          `json:"created"`            // 模型创建时间戳。
+	OwnedBy    string         `json:"owned_by"`           // 模型归属方。
+	Metadata   map[string]any `json:"metadata,omitempty"` // 附加元数据。
 	Permission []struct {
-		ID                 string `json:"id"`
-		Object             string `json:"object"`
-		Created            int64  `json:"created"`
-		AllowCreateEngine  bool   `json:"allow_create_engine"`
-		AllowSampling      bool   `json:"allow_sampling"`
-		AllowLogprobs      bool   `json:"allow_logprobs"`
-		AllowSearchIndices bool   `json:"allow_search_indices"`
-		AllowView          bool   `json:"allow_view"`
-		AllowFineTuning    bool   `json:"allow_fine_tuning"`
-		Organization       string `json:"organization"`
-		Group              string `json:"group"`
-		IsBlocking         bool   `json:"is_blocking"`
-	} `json:"permission"`
-	Root   string `json:"root"`
-	Parent string `json:"parent"`
+		ID                 string `json:"id"`                   // 权限记录 ID。
+		Object             string `json:"object"`               // 权限对象类型。
+		Created            int64  `json:"created"`              // 权限记录创建时间。
+		AllowCreateEngine  bool   `json:"allow_create_engine"`  // 是否允许创建引擎。
+		AllowSampling      bool   `json:"allow_sampling"`       // 是否允许采样。
+		AllowLogprobs      bool   `json:"allow_logprobs"`       // 是否允许 logprobs。
+		AllowSearchIndices bool   `json:"allow_search_indices"` // 是否允许搜索索引。
+		AllowView          bool   `json:"allow_view"`           // 是否允许查看。
+		AllowFineTuning    bool   `json:"allow_fine_tuning"`    // 是否允许微调。
+		Organization       string `json:"organization"`         // 所属组织。
+		Group              string `json:"group"`                // 所属分组。
+		IsBlocking         bool   `json:"is_blocking"`          // 是否阻塞使用。
+	} `json:"permission"` // 权限列表。
+	Root   string `json:"root"`   // 根模型名称。
+	Parent string `json:"parent"` // 父模型名称。
 }
 
+// OpenAIModelsResponse 表示 OpenAI 兼容模型列表接口响应。
 type OpenAIModelsResponse struct {
-	Data    []OpenAIModel `json:"data"`
-	Success bool          `json:"success"`
+	Data    []OpenAIModel `json:"data"`    // 模型列表。
+	Success bool          `json:"success"` // 请求是否成功。
 }
 
+// parseStatusFilter 把渠道状态筛选参数转换为内部状态值。
 func parseStatusFilter(statusParam string) int {
+	// 支持 enabled/disabled 与 1/0 两种表达形式，其余值表示不过滤。
 	switch strings.ToLower(statusParam) {
 	case "enabled", "1":
 		return common.ChannelStatusEnabled
@@ -62,14 +66,18 @@ func parseStatusFilter(statusParam string) int {
 	}
 }
 
+// clearChannelInfo 清理渠道对象中不适合直接返回给前端的运行时多 key 状态信息。
 func clearChannelInfo(channel *model.Channel) {
+	// 多 key 渠道的禁用原因和禁用时间属于运行态细节，列表接口中统一清空。
 	if channel.ChannelInfo.IsMultiKey {
 		channel.ChannelInfo.MultiKeyDisabledReason = nil
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
 	}
 }
 
+// applyChannelStatusFilter 把状态过滤条件附加到 GORM 查询上。
 func applyChannelStatusFilter(query *gorm.DB, statusFilter int) *gorm.DB {
+	// enabled 仅保留启用渠道，0 保留非启用渠道，其余值表示不过滤。
 	if statusFilter == common.ChannelStatusEnabled {
 		return query.Where("status = ?", common.ChannelStatusEnabled)
 	}
@@ -79,7 +87,9 @@ func applyChannelStatusFilter(query *gorm.DB, statusFilter int) *gorm.DB {
 	return query
 }
 
+// buildChannelListQuery 构造渠道列表查询的基础 GORM 查询对象。
 func buildChannelListQuery(group string, statusFilter int, typeFilter int) *gorm.DB {
+	// 先按分组过滤，再叠加状态和类型过滤条件。
 	query := model.DB.Model(&model.Channel{})
 	query = model.ApplyChannelGroupFilter(query, group)
 	query = applyChannelStatusFilter(query, statusFilter)
@@ -89,7 +99,11 @@ func buildChannelListQuery(group string, statusFilter int, typeFilter int) *gorm
 	return query
 }
 
+// GetAllChannels 返回渠道分页列表及类型统计信息。
+// 参数：
+//   - c：当前请求上下文，用于读取筛选条件、分页与排序参数。
 func GetAllChannels(c *gin.Context) {
+	// 解析分页、排序、标签模式和基础过滤参数。
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
@@ -110,6 +124,7 @@ func GetAllChannels(c *gin.Context) {
 
 	var total int64
 
+	// 标签模式下先分页取标签，再按标签读取渠道；普通模式直接分页查渠道。
 	if enableTagMode {
 		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 		if err != nil {
@@ -139,6 +154,7 @@ func GetAllChannels(c *gin.Context) {
 			channelData = append(channelData, tagChannels...)
 		}
 	} else {
+		// 普通模式下先统计总数，再读取当前页的渠道列表。
 		if err := buildChannelListQuery(groupFilter, statusFilter, typeFilter).Count(&total).Error; err != nil {
 			common.SysError("failed to count channels: " + err.Error())
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道数量失败，请稍后重试"})
@@ -157,10 +173,12 @@ func GetAllChannels(c *gin.Context) {
 		}
 	}
 
+	// 在返回前清理各渠道对象中的多 key 运行态敏感信息。
 	for _, datum := range channelData {
 		clearChannelInfo(datum)
 	}
 
+	// 额外统计当前过滤条件下各渠道类型数量，供前端做类型侧边统计展示。
 	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1)
 	var results []struct {
 		Type  int64
@@ -175,6 +193,8 @@ func GetAllChannels(c *gin.Context) {
 	for _, r := range results {
 		typeCounts[r.Type] = r.Count
 	}
+
+	// 以统一分页结构返回渠道列表和类型统计。
 	common.ApiSuccess(c, gin.H{
 		"items":       channelData,
 		"total":       total,
@@ -185,7 +205,9 @@ func GetAllChannels(c *gin.Context) {
 	return
 }
 
+// buildFetchModelsHeaders 根据渠道类型和 header override 规则构造模型拉取请求头。
 func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, error) {
+	// 先根据渠道类型生成默认认证头；Claude 使用专用 header。
 	var headers http.Header
 	switch channel.Type {
 	case constant.ChannelTypeAnthropic:
@@ -194,6 +216,7 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 		headers = GetAuthHeader(key)
 	}
 
+	// 再叠加渠道上的 header override 配置，但忽略透传规则键。
 	headerOverride := channel.GetHeaderOverride()
 	for k, v := range headerOverride {
 		if relaychannel.IsHeaderPassthroughRuleKey(k) {
@@ -212,7 +235,11 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 	return headers, nil
 }
 
+// FetchUpstreamModels 拉取指定渠道当前上游可见的模型 ID 列表。
+// 参数：
+//   - c：当前请求上下文，用于读取渠道 ID 并返回模型列表。
 func FetchUpstreamModels(c *gin.Context) {
+	// 先解析路径中的渠道 ID 并读取完整渠道配置。
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)
@@ -225,6 +252,7 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
+	// 调用统一的模型拉取逻辑查询该渠道上游模型列表。
 	ids, err := fetchChannelUpstreamModelIDs(channel)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -234,6 +262,7 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
+	// 将上游模型 ID 列表原样返回给调用方。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -241,7 +270,11 @@ func FetchUpstreamModels(c *gin.Context) {
 	})
 }
 
+// FixChannelsAbilities 重新修复全部渠道的 abilities 映射关系。
+// 参数：
+//   - c：当前请求上下文，用于返回修复成功与失败数量。
 func FixChannelsAbilities(c *gin.Context) {
+	// 调用 model 层重建渠道能力映射，并把结果返回给前端。
 	success, fails, err := model.FixAbility()
 	if err != nil {
 		common.ApiError(c, err)
@@ -258,6 +291,7 @@ func FixChannelsAbilities(c *gin.Context) {
 }
 
 func SearchChannels(c *gin.Context) {
+	// 读取搜索关键字、分组、模型、状态和排序参数，准备构造搜索结果。
 	keyword := c.Query("keyword")
 	group := c.Query("group")
 	modelKeyword := c.Query("model")
@@ -267,6 +301,8 @@ func SearchChannels(c *gin.Context) {
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	channelData := make([]*model.Channel, 0)
+
+	// 标签模式下先搜标签再展开渠道；普通模式直接按关键字搜索渠道。
 	if enableTagMode {
 		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
 		if err != nil {
@@ -304,6 +340,7 @@ func SearchChannels(c *gin.Context) {
 		channelData = channels
 	}
 
+	// 如果指定了状态过滤，则在内存结果集中做一次启用/禁用筛选。
 	if statusFilter == common.ChannelStatusEnabled || statusFilter == 0 {
 		filtered := make([]*model.Channel, 0, len(channelData))
 		for _, ch := range channelData {
@@ -319,11 +356,13 @@ func SearchChannels(c *gin.Context) {
 	}
 
 	// calculate type counts for search results
+	// 统计搜索结果中各渠道类型数量，供前端展示搜索后的类型分布。
 	typeCounts := make(map[int64]int64)
 	for _, channel := range channelData {
 		typeCounts[int64(channel.Type)]++
 	}
 
+	// 解析可选的渠道类型过滤参数，后续在结果集上二次筛选。
 	typeParam := c.Query("type")
 	typeFilter := -1
 	if typeParam != "" {
@@ -332,6 +371,7 @@ func SearchChannels(c *gin.Context) {
 		}
 	}
 
+	// 当指定了渠道类型时，在结果集里保留目标类型渠道。
 	if typeFilter >= 0 {
 		filtered := make([]*model.Channel, 0, len(channelData))
 		for _, ch := range channelData {
@@ -342,6 +382,7 @@ func SearchChannels(c *gin.Context) {
 		channelData = filtered
 	}
 
+	// 解析分页参数，并对非法页码和值做兜底修正。
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -351,6 +392,7 @@ func SearchChannels(c *gin.Context) {
 		pageSize = 20
 	}
 
+	// 根据分页参数从搜索结果切出当前页数据窗口。
 	total := len(channelData)
 	startIdx := (page - 1) * pageSize
 	if startIdx > total {
@@ -363,10 +405,12 @@ func SearchChannels(c *gin.Context) {
 
 	pagedData := channelData[startIdx:endIdx]
 
+	// 返回前清理运行态多 key 信息，避免不必要的内部细节泄露给前端。
 	for _, datum := range pagedData {
 		clearChannelInfo(datum)
 	}
 
+	// 返回分页后的渠道搜索结果以及类型统计信息。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -379,7 +423,11 @@ func SearchChannels(c *gin.Context) {
 	return
 }
 
+// GetChannel 返回单个渠道的详细信息。
+// 参数：
+//   - c：当前请求上下文，用于读取渠道 ID 并返回渠道详情。
 func GetChannel(c *gin.Context) {
+	// 先解析路径中的渠道 ID 并读取渠道详情。
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)
@@ -390,9 +438,13 @@ func GetChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 返回前清理多 key 运行态信息，保持详情接口输出稳定。
 	if channel != nil {
 		clearChannelInfo(channel)
 	}
+
+	// 以统一成功响应格式返回渠道详情。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -404,6 +456,7 @@ func GetChannel(c *gin.Context) {
 // GetChannelKey 获取渠道密钥（需要通过安全验证中间件）
 // 此函数依赖 SecureVerificationRequired 中间件，确保用户已通过安全验证
 func GetChannelKey(c *gin.Context) {
+	// 获取当前操作用户和目标渠道 ID，后续用于读取密钥和记录审计日志。
 	userId := c.GetInt("id")
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -412,6 +465,7 @@ func GetChannelKey(c *gin.Context) {
 	}
 
 	// 获取渠道信息（包含密钥）
+	// 这里必须读取包含敏感字段的完整渠道对象，否则无法返回真实密钥。
 	channel, err := model.GetChannelById(channelId, true)
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("获取渠道信息失败: %v", err))
@@ -424,9 +478,11 @@ func GetChannelKey(c *gin.Context) {
 	}
 
 	// 记录操作日志
+	// 在返回密钥前记录审计日志，便于后续追踪谁查看过敏感信息。
 	model.RecordLog(userId, model.LogTypeSystem, fmt.Sprintf("查看渠道密钥信息 (渠道ID: %d)", channelId))
 
 	// 返回渠道密钥
+	// 通过安全验证后，将渠道密钥包装在成功响应里返回给前端。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "获取成功",
@@ -437,8 +493,15 @@ func GetChannelKey(c *gin.Context) {
 }
 
 // validateTwoFactorAuth 统一的2FA验证函数
+// 参数：
+//   - twoFA：当前用户绑定的 2FA 配置对象。
+//   - code：用户输入的验证码或备用码。
+//
+// 返回：
+//   - bool：true 表示验证成功，false 表示所有验证方式都失败。
 func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 	// 尝试验证TOTP
+	// 先按纯数字验证码处理，验证标准 TOTP 动态口令。
 	if cleanCode, err := common.ValidateNumericCode(code); err == nil {
 		if isValid, _ := twoFA.ValidateTOTPAndUpdateUsage(cleanCode); isValid {
 			return true
@@ -446,6 +509,7 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 	}
 
 	// 尝试验证备用码
+	// 如果 TOTP 未通过，则再尝试把输入值当成备用恢复码验证。
 	if isValid, err := twoFA.ValidateBackupCodeAndUpdateUsage(code); err == nil && isValid {
 		return true
 	}
@@ -454,13 +518,21 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 }
 
 // validateChannel 通用的渠道校验函数
+// 参数：
+//   - channel：待校验的渠道对象。
+//   - isAdd：是否处于新增渠道场景；新增时会执行更严格的必填项校验。
+//
+// 返回：
+//   - error：校验不通过时返回具体错误原因。
 func validateChannel(channel *model.Channel, isAdd bool) error {
 	// 校验 channel settings
+	// 首先验证渠道附加设置的格式是否正确。
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
+	// 新增场景要求关键字段完整，并限制模型名称长度，避免落库异常。
 	if isAdd {
 		if channel == nil || channel.Key == "" {
 			return fmt.Errorf("channel cannot be empty")
@@ -475,6 +547,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// VertexAI 特殊校验
+	// VertexAI 需要额外校验部署地区 JSON 配置是否合法且包含 default 区域。
 	if channel.Type == constant.ChannelTypeVertexAi {
 		if channel.Other == "" {
 			return fmt.Errorf("部署地区不能为空")
@@ -491,6 +564,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
+	// Codex 渠道的 key 需要是包含 access_token 和 account_id 的 JSON 对象。
 	if channel.Type == constant.ChannelTypeCodex {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
@@ -513,7 +587,11 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	return nil
 }
 
+// RefreshCodexChannelCredential 手动刷新指定 Codex 渠道的 OAuth 凭证。
+// 参数：
+//   - c：当前请求上下文，用于读取渠道 ID 并返回刷新结果。
 func RefreshCodexChannelCredential(c *gin.Context) {
+	// 解析路径参数中的渠道 ID，后续据此加载目标渠道。
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
@@ -546,21 +624,33 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 }
 
 type AddChannelRequest struct {
-	Mode                      string                `json:"mode"`
-	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`
-	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"`
-	Channel                   *model.Channel        `json:"channel"`
+	Mode                      string                `json:"mode"`                           // 添加模式，如 single、batch、multi_to_single。
+	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`                 // 多 key 渠道的 key 选择模式。
+	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"` // 批量添加时是否将 key 前缀拼进渠道名。
+	Channel                   *model.Channel        `json:"channel"`                        // 要添加的渠道主体配置。
 }
 
+// getVertexArrayKeys 解析 Vertex AI 批量添加场景下的 JSON 数组密钥输入。
+// 参数：
+//   - keys：用户提交的原始 keys 字符串，预期为 JSON 数组。
+//
+// 返回：
+//   - []string：清洗后的单个密钥字符串列表。
+//   - error：JSON 解析、编码或空数组校验失败时返回错误。
 func getVertexArrayKeys(keys string) ([]string, error) {
+	// 空输入直接返回 nil，交由上层决定是否视为错误。
 	if keys == "" {
 		return nil, nil
 	}
+
+	// Vertex AI 的批量导入要求是标准 JSON 数组格式，这里先做统一解析。
 	var keyArray []interface{}
 	err := common.Unmarshal([]byte(keys), &keyArray)
 	if err != nil {
 		return nil, fmt.Errorf("批量添加 Vertex AI 必须使用标准的JsonArray格式，例如[{key1}, {key2}...]，请检查输入: %w", err)
 	}
+
+	// 逐项把数组元素转换成字符串，并过滤掉空项。
 	cleanKeys := make([]string, 0, len(keyArray))
 	for _, key := range keyArray {
 		var keyStr string
@@ -578,13 +668,19 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 			cleanKeys = append(cleanKeys, keyStr)
 		}
 	}
+
+	// 清洗后为空视为无效输入，避免创建空渠道。
 	if len(cleanKeys) == 0 {
 		return nil, fmt.Errorf("批量添加 Vertex AI 的 keys 不能为空")
 	}
 	return cleanKeys, nil
 }
 
+// AddChannel 按单个、批量或多 key 合并模式新增渠道。
+// 参数：
+//   - c：当前请求上下文，用于读取请求体并返回新增结果。
 func AddChannel(c *gin.Context) {
+	// 先解析新增渠道请求体，拿到模式、多 key 策略和渠道配置。
 	addChannelRequest := AddChannelRequest{}
 	err := c.ShouldBindJSON(&addChannelRequest)
 	if err != nil {
@@ -593,6 +689,7 @@ func AddChannel(c *gin.Context) {
 	}
 
 	// 使用统一的校验函数
+	// 新增前先对渠道配置做完整校验，拦截设置格式和必填项问题。
 	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -601,10 +698,14 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
+	// 给新增渠道写入创建时间，后续批量展开时会复用这份基础对象。
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
+
+	// 根据不同添加模式，把用户提交的 key 输入规范化为一个或多个渠道实例来源。
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
+		// 多 key 单渠道模式下，把所有 key 合并到一个渠道对象中并记录 key 数量。
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
 		addChannelRequest.Channel.ChannelInfo.MultiKeyMode = addChannelRequest.MultiKeyMode
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
@@ -632,6 +733,7 @@ func AddChannel(c *gin.Context) {
 		}
 		keys = []string{addChannelRequest.Channel.Key}
 	case "batch":
+		// 批量模式下，每个 key 都会展开成一个独立渠道。
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 			// multi json
 			keys, err = getVertexArrayKeys(addChannelRequest.Channel.Key)
@@ -646,6 +748,7 @@ func AddChannel(c *gin.Context) {
 			keys = strings.Split(addChannelRequest.Channel.Key, "\n")
 		}
 	case "single":
+		// 单渠道模式下只使用一个 key 创建一条记录。
 		keys = []string{addChannelRequest.Channel.Key}
 	default:
 		c.JSON(http.StatusOK, gin.H{
@@ -655,6 +758,7 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
+	// 逐个 key 展开渠道对象；批量模式下可按需把 key 前缀追加到名称中方便识别。
 	channels := make([]model.Channel, 0, len(keys))
 	for _, key := range keys {
 		if key == "" {
@@ -671,6 +775,8 @@ func AddChannel(c *gin.Context) {
 		}
 		channels = append(channels, *localChannel)
 	}
+
+	// 批量插入数据库；成功后重置代理客户端缓存使新渠道立即生效。
 	err = model.BatchInsertChannels(channels)
 	if err != nil {
 		common.ApiError(c, err)
@@ -684,7 +790,11 @@ func AddChannel(c *gin.Context) {
 	return
 }
 
+// DeleteChannel 删除指定 ID 的单个渠道。
+// 参数：
+//   - c：当前请求上下文，用于读取渠道 ID 并返回删除结果。
 func DeleteChannel(c *gin.Context) {
+	// 根据路径参数构造渠道对象，并调用模型层执行删除。
 	id, _ := strconv.Atoi(c.Param("id"))
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
@@ -692,6 +802,8 @@ func DeleteChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 删除后刷新渠道缓存，保证运行时不会继续使用已删渠道。
 	model.InitChannelCache()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -700,12 +812,18 @@ func DeleteChannel(c *gin.Context) {
 	return
 }
 
+// DeleteDisabledChannel 删除所有处于禁用状态的渠道。
+// 参数：
+//   - c：当前请求上下文，用于返回删除数量。
 func DeleteDisabledChannel(c *gin.Context) {
+	// 调用模型层批量删除禁用渠道，并返回影响行数。
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 删除完成后刷新渠道缓存，避免旧缓存残留。
 	model.InitChannelCache()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -715,19 +833,24 @@ func DeleteDisabledChannel(c *gin.Context) {
 	return
 }
 
+// ChannelTag 表示基于标签批量编辑渠道时使用的请求结构。
 type ChannelTag struct {
-	Tag            string  `json:"tag"`
-	NewTag         *string `json:"new_tag"`
-	Priority       *int64  `json:"priority"`
-	Weight         *uint   `json:"weight"`
-	ModelMapping   *string `json:"model_mapping"`
-	Models         *string `json:"models"`
-	Groups         *string `json:"groups"`
-	ParamOverride  *string `json:"param_override"`
-	HeaderOverride *string `json:"header_override"`
+	Tag            string  `json:"tag"`             // 目标标签名。
+	NewTag         *string `json:"new_tag"`         // 新标签名，用于标签重命名。
+	Priority       *int64  `json:"priority"`        // 批量更新后的优先级。
+	Weight         *uint   `json:"weight"`          // 批量更新后的权重。
+	ModelMapping   *string `json:"model_mapping"`   // 批量更新后的模型映射 JSON。
+	Models         *string `json:"models"`          // 批量更新后的模型列表字符串。
+	Groups         *string `json:"groups"`          // 批量更新后的分组列表字符串。
+	ParamOverride  *string `json:"param_override"`  // 批量更新后的参数覆盖 JSON。
+	HeaderOverride *string `json:"header_override"` // 批量更新后的请求头覆盖 JSON。
 }
 
+// DisableTagChannels 批量禁用某个标签下的所有渠道。
+// 参数：
+//   - c：当前请求上下文，用于读取标签请求体并返回结果。
 func DisableTagChannels(c *gin.Context) {
+	// 解析标签请求体；tag 为空时直接返回参数错误。
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
 	if err != nil || channelTag.Tag == "" {
@@ -737,6 +860,8 @@ func DisableTagChannels(c *gin.Context) {
 		})
 		return
 	}
+
+	// 调用模型层按标签批量禁用渠道，并刷新缓存。
 	err = model.DisableChannelByTag(channelTag.Tag)
 	if err != nil {
 		common.ApiError(c, err)
@@ -750,7 +875,11 @@ func DisableTagChannels(c *gin.Context) {
 	return
 }
 
+// EnableTagChannels 批量启用某个标签下的所有渠道。
+// 参数：
+//   - c：当前请求上下文，用于读取标签请求体并返回结果。
 func EnableTagChannels(c *gin.Context) {
+	// 解析标签请求体；tag 为空时直接返回参数错误。
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
 	if err != nil || channelTag.Tag == "" {
@@ -760,6 +889,8 @@ func EnableTagChannels(c *gin.Context) {
 		})
 		return
 	}
+
+	// 调用模型层按标签批量启用渠道，并刷新缓存。
 	err = model.EnableChannelByTag(channelTag.Tag)
 	if err != nil {
 		common.ApiError(c, err)
@@ -773,7 +904,11 @@ func EnableTagChannels(c *gin.Context) {
 	return
 }
 
+// EditTagChannels 批量编辑某个标签下渠道的标签、模型、分组与覆盖配置。
+// 参数：
+//   - c：当前请求上下文，用于读取批量编辑请求并返回结果。
 func EditTagChannels(c *gin.Context) {
+	// 先解析标签编辑请求；基础参数格式错误时直接拒绝。
 	channelTag := ChannelTag{}
 	err := c.ShouldBindJSON(&channelTag)
 	if err != nil {
@@ -783,6 +918,8 @@ func EditTagChannels(c *gin.Context) {
 		})
 		return
 	}
+
+	// tag 是批量编辑的定位键，不能为空。
 	if channelTag.Tag == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -790,6 +927,8 @@ func EditTagChannels(c *gin.Context) {
 		})
 		return
 	}
+
+	// 如果传入参数覆盖配置，则要求其必须是合法 JSON，并做 trim 处理。
 	if channelTag.ParamOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.ParamOverride)
 		if trimmed != "" && !json.Valid([]byte(trimmed)) {
@@ -801,6 +940,8 @@ func EditTagChannels(c *gin.Context) {
 		}
 		channelTag.ParamOverride = common.GetPointer[string](trimmed)
 	}
+
+	// 如果传入请求头覆盖配置，同样需要保证 JSON 合法性。
 	if channelTag.HeaderOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.HeaderOverride)
 		if trimmed != "" && !json.Valid([]byte(trimmed)) {
@@ -812,6 +953,8 @@ func EditTagChannels(c *gin.Context) {
 		}
 		channelTag.HeaderOverride = common.GetPointer[string](trimmed)
 	}
+
+	// 调用模型层批量更新该标签下的渠道配置，并在完成后刷新缓存。
 	err = model.EditChannelByTag(channelTag.Tag, channelTag.NewTag, channelTag.ModelMapping, channelTag.Models, channelTag.Groups, channelTag.Priority, channelTag.Weight, channelTag.ParamOverride, channelTag.HeaderOverride)
 	if err != nil {
 		common.ApiError(c, err)
@@ -825,12 +968,17 @@ func EditTagChannels(c *gin.Context) {
 	return
 }
 
+// ChannelBatch 表示按 ID 批量操作渠道时的请求结构。
 type ChannelBatch struct {
-	Ids []int   `json:"ids"`
-	Tag *string `json:"tag"`
+	Ids []int   `json:"ids"` // 需要操作的渠道 ID 列表。
+	Tag *string `json:"tag"` // 预留的标签字段，当前删除逻辑未使用。
 }
 
+// DeleteChannelBatch 批量删除多个渠道。
+// 参数：
+//   - c：当前请求上下文，用于读取待删除的渠道 ID 列表。
 func DeleteChannelBatch(c *gin.Context) {
+	// 解析批量请求体；缺少 ID 列表时直接返回参数错误。
 	channelBatch := ChannelBatch{}
 	err := c.ShouldBindJSON(&channelBatch)
 	if err != nil || len(channelBatch.Ids) == 0 {
@@ -840,6 +988,8 @@ func DeleteChannelBatch(c *gin.Context) {
 		})
 		return
 	}
+
+	// 调用模型层批量删除，并在删除后刷新渠道缓存。
 	err = model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
 		common.ApiError(c, err)
@@ -854,13 +1004,18 @@ func DeleteChannelBatch(c *gin.Context) {
 	return
 }
 
+// PatchChannel 表示更新渠道时的扩展请求结构。
 type PatchChannel struct {
-	model.Channel
-	MultiKeyMode *string `json:"multi_key_mode"`
-	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	model.Channel                      // 继承渠道主体字段，作为更新载体。
+	MultiKeyMode *string `json:"multi_key_mode"` // 显式指定的新多 key 模式。
+	KeyMode      *string `json:"key_mode"`       // 多 key 模式下密钥是覆盖还是追加。
 }
 
+// UpdateChannel 更新单个渠道的配置。
+// 参数：
+//   - c：当前请求上下文，用于读取更新请求体并返回结果。
 func UpdateChannel(c *gin.Context) {
+	// 先解析更新请求体，拿到渠道字段及多 key 扩展控制参数。
 	channel := PatchChannel{}
 	err := c.ShouldBindJSON(&channel)
 	if err != nil {
@@ -869,6 +1024,7 @@ func UpdateChannel(c *gin.Context) {
 	}
 
 	// 使用统一的校验函数
+	// 更新前先校验渠道配置合法性，但更新场景不强制要求所有新增必填项。
 	if err := validateChannel(&channel.Channel, false); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -877,6 +1033,7 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
+	// 读取原始渠道，确保客户端未传的 ChannelInfo 字段也能被完整保留。
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -887,14 +1044,17 @@ func UpdateChannel(c *gin.Context) {
 	}
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
+	// 先复制原始 ChannelInfo，避免多 key 状态被请求体意外覆盖为空。
 	channel.ChannelInfo = originChannel.ChannelInfo
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
+	// 如果调用方显式指定了新的多 key 模式，则在保留原 ChannelInfo 的基础上覆盖模式值。
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
 	}
 
 	// 处理多key模式下的密钥追加/覆盖逻辑
+	// 多 key 渠道更新时支持两种语义：append 追加新 key，overwrite 覆盖原 key 集合。
 	if channel.KeyMode != nil && channel.ChannelInfo.IsMultiKey {
 		switch *channel.KeyMode {
 		case "append":

@@ -30,6 +30,8 @@ type Setup2FAResponse struct {
 }
 
 // Setup2FA 初始化2FA设置
+// 参数：
+//   - c：当前请求上下文，用于为当前登录用户初始化 2FA。
 func Setup2FA(c *gin.Context) {
 	userId := c.GetInt("id")
 
@@ -134,6 +136,8 @@ func Setup2FA(c *gin.Context) {
 }
 
 // Enable2FA 启用2FA
+// 参数：
+//   - c：当前请求上下文，用于校验验证码并启用 2FA。
 func Enable2FA(c *gin.Context) {
 	var req Setup2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -201,6 +205,8 @@ func Enable2FA(c *gin.Context) {
 }
 
 // Disable2FA 禁用2FA
+// 参数：
+//   - c：当前请求上下文，用于校验验证码或备用码并禁用 2FA。
 func Disable2FA(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -273,6 +279,8 @@ func Disable2FA(c *gin.Context) {
 }
 
 // Get2FAStatus 获取用户2FA状态
+// 参数：
+//   - c：当前请求上下文，用于返回当前登录用户的 2FA 状态。
 func Get2FAStatus(c *gin.Context) {
 	userId := c.GetInt("id")
 
@@ -309,6 +317,8 @@ func Get2FAStatus(c *gin.Context) {
 }
 
 // RegenerateBackupCodes 重新生成备用码
+// 参数：
+//   - c：当前请求上下文，用于校验 2FA 后为当前用户重发备用码。
 func RegenerateBackupCodes(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -395,6 +405,8 @@ func RegenerateBackupCodes(c *gin.Context) {
 }
 
 // Verify2FALogin 登录时验证2FA
+// 参数：
+//   - c：当前请求上下文，用于校验 pending 登录用户的 2FA 验证码。
 func Verify2FALogin(c *gin.Context) {
 	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -486,6 +498,8 @@ func Verify2FALogin(c *gin.Context) {
 }
 
 // Admin2FAStats 管理员获取2FA统计信息
+// 参数：
+//   - c：当前请求上下文，用于返回全站 2FA 统计信息。
 func Admin2FAStats(c *gin.Context) {
 	stats, err := model.GetTwoFAStats()
 	if err != nil {
@@ -501,6 +515,8 @@ func Admin2FAStats(c *gin.Context) {
 }
 
 // AdminDisable2FA 管理员强制禁用用户2FA
+// 参数：
+//   - c：当前请求上下文，用于读取目标用户 ID 并强制禁用其 2FA。
 func AdminDisable2FA(c *gin.Context) {
 	userIdStr := c.Param("id")
 	userId, err := strconv.Atoi(userIdStr)

@@ -23,138 +23,182 @@ import (
 
 // https://github.com/songquanpeng/one-api/issues/79
 
+// OpenAISubscriptionResponse 表示 OpenAI 兼容订阅额度接口的响应结构。
 type OpenAISubscriptionResponse struct {
-	Object             string  `json:"object"`
-	HasPaymentMethod   bool    `json:"has_payment_method"`
-	SoftLimitUSD       float64 `json:"soft_limit_usd"`
-	HardLimitUSD       float64 `json:"hard_limit_usd"`
-	SystemHardLimitUSD float64 `json:"system_hard_limit_usd"`
-	AccessUntil        int64   `json:"access_until"`
+	Object             string  `json:"object"`                // 响应对象类型标识。
+	HasPaymentMethod   bool    `json:"has_payment_method"`    // 是否绑定了支付方式。
+	SoftLimitUSD       float64 `json:"soft_limit_usd"`        // 软额度上限。
+	HardLimitUSD       float64 `json:"hard_limit_usd"`        // 硬额度上限。
+	SystemHardLimitUSD float64 `json:"system_hard_limit_usd"` // 系统级硬额度上限。
+	AccessUntil        int64   `json:"access_until"`          // 访问有效截止时间。
 }
 
+// OpenAIUsageDailyCost 表示 OpenAI 兼容日消耗明细中的单日数据。
 type OpenAIUsageDailyCost struct {
-	Timestamp float64 `json:"timestamp"`
+	Timestamp float64 `json:"timestamp"` // 当日时间戳。
 	LineItems []struct {
-		Name string  `json:"name"`
-		Cost float64 `json:"cost"`
-	}
+		Name string  `json:"name"` // 费用项目名称。
+		Cost float64 `json:"cost"` // 该项目费用。
+	} // 每日费用明细列表。
 }
 
+// OpenAICreditGrants 表示 OpenAI 兼容额度授予接口响应。
 type OpenAICreditGrants struct {
-	Object         string  `json:"object"`
-	TotalGranted   float64 `json:"total_granted"`
-	TotalUsed      float64 `json:"total_used"`
-	TotalAvailable float64 `json:"total_available"`
+	Object         string  `json:"object"`          // 响应对象类型。
+	TotalGranted   float64 `json:"total_granted"`   // 总授予额度。
+	TotalUsed      float64 `json:"total_used"`      // 总已用额度。
+	TotalAvailable float64 `json:"total_available"` // 当前可用额度。
 }
 
+// OpenAIUsageResponse 表示 OpenAI 兼容 usage 接口响应。
 type OpenAIUsageResponse struct {
-	Object string `json:"object"`
+	Object string `json:"object"` // 响应对象类型。
 	//DailyCosts []OpenAIUsageDailyCost `json:"daily_costs"`
-	TotalUsage float64 `json:"total_usage"` // unit: 0.01 dollar
+	TotalUsage float64 `json:"total_usage"` // 总使用量，单位为 0.01 美元。
 }
 
+// OpenAISBUsageResponse 表示 openai-sb 平台的余额查询响应。
 type OpenAISBUsageResponse struct {
-	Msg  string `json:"msg"`
+	Msg  string `json:"msg"` // 平台返回的消息文本。
 	Data *struct {
-		Credit string `json:"credit"`
-	} `json:"data"`
+		Credit string `json:"credit"` // 剩余额度字符串。
+	} `json:"data"` // 响应主体数据。
 }
 
+// AIProxyUserOverviewResponse 表示 AIProxy 用户概览接口响应。
 type AIProxyUserOverviewResponse struct {
-	Success   bool   `json:"success"`
-	Message   string `json:"message"`
-	ErrorCode int    `json:"error_code"`
+	Success   bool   `json:"success"`    // 请求是否成功。
+	Message   string `json:"message"`    // 平台返回消息。
+	ErrorCode int    `json:"error_code"` // 平台错误码。
 	Data      struct {
-		TotalPoints float64 `json:"totalPoints"`
-	} `json:"data"`
+		TotalPoints float64 `json:"totalPoints"` // 用户总积分余额。
+	} `json:"data"` // 用户概览主体数据。
 }
 
+// API2GPTUsageResponse 表示 API2GPT 平台的额度响应结构。
 type API2GPTUsageResponse struct {
-	Object         string  `json:"object"`
-	TotalGranted   float64 `json:"total_granted"`
-	TotalUsed      float64 `json:"total_used"`
-	TotalRemaining float64 `json:"total_remaining"`
+	Object         string  `json:"object"`          // 响应对象类型。
+	TotalGranted   float64 `json:"total_granted"`   // 总授予额度。
+	TotalUsed      float64 `json:"total_used"`      // 总已用额度。
+	TotalRemaining float64 `json:"total_remaining"` // 总剩余额度。
 }
 
+// APGC2DGPTUsageResponse 表示 AIGC2D 平台的额度响应结构。
 type APGC2DGPTUsageResponse struct {
 	//Grants         interface{} `json:"grants"`
-	Object         string  `json:"object"`
-	TotalAvailable float64 `json:"total_available"`
-	TotalGranted   float64 `json:"total_granted"`
-	TotalUsed      float64 `json:"total_used"`
+	Object         string  `json:"object"`          // 响应对象类型。
+	TotalAvailable float64 `json:"total_available"` // 当前可用额度。
+	TotalGranted   float64 `json:"total_granted"`   // 总授予额度。
+	TotalUsed      float64 `json:"total_used"`      // 总已用额度。
 }
 
+// SiliconFlowUsageResponse 表示 SiliconFlow 用户信息与余额响应。
 type SiliconFlowUsageResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Status  bool   `json:"status"`
+	Code    int    `json:"code"`    // 平台业务状态码。
+	Message string `json:"message"` // 平台返回消息。
+	Status  bool   `json:"status"`  // 请求是否成功。
 	Data    struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		Image         string `json:"image"`
-		Email         string `json:"email"`
-		IsAdmin       bool   `json:"isAdmin"`
-		Balance       string `json:"balance"`
-		Status        string `json:"status"`
-		Introduction  string `json:"introduction"`
-		Role          string `json:"role"`
-		ChargeBalance string `json:"chargeBalance"`
-		TotalBalance  string `json:"totalBalance"`
-		Category      string `json:"category"`
-	} `json:"data"`
+		ID            string `json:"id"`            // 用户 ID。
+		Name          string `json:"name"`          // 用户名称。
+		Image         string `json:"image"`         // 头像地址。
+		Email         string `json:"email"`         // 邮箱地址。
+		IsAdmin       bool   `json:"isAdmin"`       // 是否管理员。
+		Balance       string `json:"balance"`       // 基础余额。
+		Status        string `json:"status"`        // 用户状态。
+		Introduction  string `json:"introduction"`  // 个人简介。
+		Role          string `json:"role"`          // 用户角色。
+		ChargeBalance string `json:"chargeBalance"` // 充值余额。
+		TotalBalance  string `json:"totalBalance"`  // 总余额。
+		Category      string `json:"category"`      // 账户分类。
+	} `json:"data"` // 用户详情主体数据。
 }
 
+// DeepSeekUsageResponse 表示 DeepSeek 余额查询响应。
 type DeepSeekUsageResponse struct {
-	IsAvailable  bool `json:"is_available"`
+	IsAvailable  bool `json:"is_available"` // 账户是否可用。
 	BalanceInfos []struct {
-		Currency        string `json:"currency"`
-		TotalBalance    string `json:"total_balance"`
-		GrantedBalance  string `json:"granted_balance"`
-		ToppedUpBalance string `json:"topped_up_balance"`
-	} `json:"balance_infos"`
+		Currency        string `json:"currency"`          // 币种代码。
+		TotalBalance    string `json:"total_balance"`     // 总余额。
+		GrantedBalance  string `json:"granted_balance"`   // 赠送余额。
+		ToppedUpBalance string `json:"topped_up_balance"` // 充值余额。
+	} `json:"balance_infos"` // 各币种余额信息列表。
 }
 
+// OpenRouterCreditResponse 表示 OpenRouter credits 接口响应。
 type OpenRouterCreditResponse struct {
 	Data struct {
-		TotalCredits float64 `json:"total_credits"`
-		TotalUsage   float64 `json:"total_usage"`
-	} `json:"data"`
+		TotalCredits float64 `json:"total_credits"` // 总可授信额度。
+		TotalUsage   float64 `json:"total_usage"`   // 总已用额度。
+	} `json:"data"` // OpenRouter 主体数据。
 }
 
 // GetAuthHeader get auth header
+// 参数：
+//   - token：需要放入 Authorization 头中的 API Key。
+//
+// 返回：
+//   - http.Header：带 Bearer 认证头的请求头集合。
 func GetAuthHeader(token string) http.Header {
+	// 构造标准 Bearer 认证请求头，供大多数 OpenAI 兼容上游复用。
 	h := http.Header{}
 	h.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 	return h
 }
 
 // GetClaudeAuthHeader get claude auth header
+// 参数：
+//   - token：Claude 上游使用的 API Key。
+//
+// 返回：
+//   - http.Header：符合 Anthropic 协议要求的请求头集合。
 func GetClaudeAuthHeader(token string) http.Header {
+	// Claude 兼容接口使用 x-api-key 和 anthropic-version 两个关键请求头。
 	h := http.Header{}
 	h.Add("x-api-key", token)
 	h.Add("anthropic-version", "2023-06-01")
 	return h
 }
 
+// GetResponseBody 发起一个不带请求体的上游请求，并返回成功响应的原始字节内容。
+// 参数：
+//   - method：HTTP 方法。
+//   - url：目标上游地址。
+//   - channel：当前渠道对象，用于读取代理配置。
+//   - headers：需要附加到请求上的请求头集合。
+//
+// 返回：
+//   - []byte：响应体原始字节。
+//   - error：请求、代理创建、状态码检查或读取响应失败时返回错误。
 func GetResponseBody(method, url string, channel *model.Channel, headers http.Header) ([]byte, error) {
+	// 先构造基础请求对象，后续再把上游所需头信息逐项附加进去。
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		return nil, err
 	}
+
+	// 逐个写入调用方提供的请求头，保持与各上游接口要求一致。
 	for k := range headers {
 		req.Header.Add(k, headers.Get(k))
 	}
+
+	// 根据渠道代理配置创建 HTTP 客户端，兼容 per-channel proxy 设置。
 	client, err := service.NewProxyHttpClient(channel.GetSetting().Proxy)
 	if err != nil {
 		return nil, err
 	}
+
+	// 发起上游请求；网络异常时直接返回错误给调用方。
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+
+	// 非 200 状态码统一视为失败，交由上层决定如何处理。
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)
 	}
+
+	// 读取并关闭响应体，返回原始字节内容供上层自行解析。
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
@@ -166,13 +210,23 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	return body, nil
 }
 
+// updateChannelCloseAIBalance 从 OpenAI 兼容 credit grants 接口读取渠道余额并写回数据库。
+// 参数：
+//   - channel：需要更新余额的渠道对象。
+//
+// 返回：
+//   - float64：解析得到的可用余额。
+//   - error：请求或解析失败时返回错误。
 func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
+	// 调用 OpenAI 兼容 credit grants 接口获取额度总览。
 	url := fmt.Sprintf("%s/dashboard/billing/credit_grants", channel.GetBaseURL())
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 
 	if err != nil {
 		return 0, err
 	}
+
+	// 解析返回值并把可用余额写回渠道记录。
 	response := OpenAICreditGrants{}
 	err = json.Unmarshal(body, &response)
 	if err != nil {
@@ -182,7 +236,9 @@ func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
 	return response.TotalAvailable, nil
 }
 
+// updateChannelOpenAISBBalance 从 openai-sb 平台查询渠道余额。
 func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
+	// 通过平台专用用户状态接口拉取 credit 文本余额。
 	url := fmt.Sprintf("https://api.openai-sb.com/sb-api/user/status?api_key=%s", channel.Key)
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -196,6 +252,8 @@ func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
 	if response.Data == nil {
 		return 0, errors.New(response.Msg)
 	}
+
+	// 把平台返回的字符串余额解析成浮点数并写回渠道。
 	balance, err := strconv.ParseFloat(response.Data.Credit, 64)
 	if err != nil {
 		return 0, err
@@ -204,7 +262,9 @@ func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
+// updateChannelAIProxyBalance 从 AIProxy 用户概览接口查询渠道积分余额。
 func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
+	// AIProxy 使用 Api-Key 头认证，因此这里手动构造请求头。
 	url := "https://aiproxy.io/api/report/getUserOverview"
 	headers := http.Header{}
 	headers.Add("Api-Key", channel.Key)
@@ -220,11 +280,15 @@ func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
 	if !response.Success {
 		return 0, fmt.Errorf("code: %d, message: %s", response.ErrorCode, response.Message)
 	}
+
+	// 将总积分直接作为渠道余额保存。
 	channel.UpdateBalance(response.Data.TotalPoints)
 	return response.Data.TotalPoints, nil
 }
 
+// updateChannelAPI2GPTBalance 从 API2GPT 平台查询剩余额度。
 func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
+	// 调用平台提供的 credit grants 接口读取 remaining 字段。
 	url := "https://api.api2gpt.com/dashboard/billing/credit_grants"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 
@@ -240,7 +304,9 @@ func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 	return response.TotalRemaining, nil
 }
 
+// updateChannelSiliconFlowBalance 从 SiliconFlow 用户信息接口查询余额。
 func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
+	// 访问 SiliconFlow 用户信息接口，读取 total balance 字段。
 	url := "https://api.siliconflow.cn/v1/user/info"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -254,6 +320,8 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 	if response.Code != 20000 {
 		return 0, fmt.Errorf("code: %d, message: %s", response.Code, response.Message)
 	}
+
+	// 将字符串格式的总余额解析成浮点数并保存。
 	balance, err := strconv.ParseFloat(response.Data.TotalBalance, 64)
 	if err != nil {
 		return 0, err
