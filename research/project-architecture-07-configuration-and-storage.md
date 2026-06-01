@@ -4,6 +4,37 @@
 
 配置系统是这个项目非常有辨识度的一部分。
 
+### `setting/` 包到底是什么
+
+`setting/` 不是单纯“放配置文件的目录”，而更接近一层**运行时配置定义层**。  
+这里的代码主要做三件事：
+
+1. 定义配置结构和默认值
+2. 提供运行时读取入口，例如 `GetPaymentSetting()`、`GetFetchSetting()`
+3. 把配置对象注册到统一配置管理器，或接入旧版 `OptionMap` 热更新链路
+
+因此从职责上看，可以把这套设计拆成三层：
+
+```text
+setting/*
+  配置定义层
+  - struct
+  - 默认值
+  - getter
+  - 注册到 ConfigManager
+
+model.Option / common.OptionMap
+  配置缓存与同步层
+  - options 表读写
+  - 进程内缓存
+  - 热更新分发
+
+database.options
+  配置持久化层
+```
+
+这也是为什么阅读 `setting/` 时会感觉“像配置文件”，但真正生效又明显不是从 YAML / TOML / JSON 文件直接加载。
+
 ### 三层来源
 
 配置大致来自三层：
@@ -12,9 +43,34 @@
 2. 环境变量
 3. 数据库 options 表
 
+更准确地说：
+
+- **代码默认值**
+  写在 `setting/*` 或 `common/*` 的全局变量与默认 struct 中。
+- **环境变量**
+  主要由 `common.InitEnv()` 在启动早期加载，适合端口、数据库、Redis、节点角色、同步周期等基础运行参数。
+- **数据库 `options` 表**
+  这是绝大多数“后台可改系统设置”的最终持久化位置。
+
+因此日常运维里看到的“站点设置”“支付设置”“签到设置”“主题设置”等，主来源通常不是 `.env`，而是 `options` 表。
+
 ### 运行时热更新
 
 `model.SyncOptions()` 定时从数据库同步到内存，说明大部分系统设置都支持热更新，不需要重启。
+
+这个热更新有两种生效路径：
+
+1. **当前节点本地立即生效**
+   管理接口调用 `model.UpdateOption()` 后，会先落库，再立刻调用 `updateOptionMap()` 更新当前进程内存。
+2. **其他节点延迟同步生效**
+   其他节点依靠 `model.SyncOptions(common.SyncFrequency)` 周期性从数据库拉取更新。
+
+所以更准确的描述是：
+
+```text
+当前节点：改完立即生效
+其他节点：下一个同步周期生效
+```
 
 ### 两种组织方式
 
@@ -24,6 +80,126 @@
 2. 新风格：通过 `setting/config/ConfigManager` 统一注册结构化配置
 
 这表明项目正处在“从散式配置向结构化配置演进”的过程中。
+
+### 新风格配置：结构化 `ConfigManager`
+
+新风格配置的典型写法是：
+
+- 在 `setting/...` 中定义一个 struct
+- 提供默认值
+- 在 `init()` 里调用 `config.GlobalConfig.Register(...)`
+- 业务代码通过 `GetXXXSetting()` 读取
+
+例如：
+
+- `operation_setting.PaymentSetting`
+- `operation_setting.GeneralSetting`
+- `operation_setting.CheckinSetting`
+- `operation_setting.TokenSetting`
+- `operation_setting.MonitorSetting`
+- `system_setting.FetchSetting`
+- `console_setting.ConsoleSetting`
+
+这些配置在数据库中的键名是扁平化的：
+
+```text
+payment_setting.amount_options
+payment_setting.amount_discount
+general_setting.docs_link
+checkin_setting.enabled
+fetch_setting.enable_ssrf_protection
+console_setting.announcements
+```
+
+也就是说，代码里是结构化对象，落库时仍然是 `options` 表中的 `key/value`。
+
+### 旧风格配置：`OptionMap` + 全局变量
+
+旧风格配置没有统一 struct，而是：
+
+- 先在 `model.InitOptionMap()` 里声明默认键值
+- 再从数据库逐项覆盖
+- `updateOptionMap()` 根据 key 把值同步到 `common`、`setting`、`operation_setting` 等包级变量
+
+典型例子包括：
+
+- `Price`
+- `USDExchangeRate`
+- `MinTopUp`
+- `StripeApiSecret`
+- `TopupGroupRatio`
+- `ModelRatio`
+- `AutomaticDisableKeywords`
+
+这类配置依然支持热更新，但代码组织上更分散，也更依赖字符串 key。
+
+### `setting/` 内部也不是完全统一的
+
+虽然很多新代码已经迁到结构化配置，但 `setting/` 目录内部仍然同时存在几种形态：
+
+1. **结构化系统设置**
+   如 `setting/operation_setting/*.go`、`setting/system_setting/*.go`、`setting/console_setting/*.go`
+2. **旧式全局变量设置**
+   如 `setting/payment_creem.go`、`setting/payment_stripe.go`、`setting/payment_waffo.go`
+3. **带辅助序列化逻辑的配置**
+   如倍率、支付方式、敏感词、自动分组等，会额外提供 `ToJSONString()` / `Update...ByJSONString()` 一类函数
+
+所以 `setting/` 更像“配置相关能力集合”，而不是一套已经彻底统一完毕的配置框架。
+
+### 启动时如何装载
+
+配置装载顺序大致如下：
+
+1. `common.InitEnv()`
+   先加载环境变量和基础运行参数。
+2. `model.InitDB()`
+   建立数据库连接。
+3. `model.InitOptionMap()`
+   先填充代码默认值，再从 `options` 表加载数据库配置覆盖到内存。
+4. `go model.SyncOptions(common.SyncFrequency)`
+   服务启动后继续周期性热同步。
+
+这意味着：
+
+- `.env` / 环境变量更偏基础运行参数
+- `setting` 默认值是兜底
+- 数据库 `options` 才是大多数后台设置的真实来源
+
+### master / slave 是否都会读取这些设置
+
+会。  
+`model.SyncOptions(common.SyncFrequency)` 在 `main()` 中是无条件启动的，不区分 `master` 还是 `slave`。
+
+因此：
+
+- `master` 会定期同步配置
+- `slave` 也会定期同步配置
+- 两者共享同一个 `options` 表时，能够保持系统设置最终一致
+
+但也要注意两点：
+
+1. 这是**轮询同步**，不是数据库变更订阅
+2. 多节点之间存在一个 `SYNC_FREQUENCY` 长度的最终一致性窗口，默认是 60 秒
+
+### 运行期能不能动态修改
+
+可以，答案是明确的“能”。
+
+常见路径是：
+
+1. 管理后台或管理 API 提交新设置
+2. `controller.UpdateOption` 调用 `model.UpdateOption`
+3. 新值写入 `options` 表
+4. 当前节点立即刷新内存
+5. 其他节点在下一轮 `SyncOptions` 时读到新值
+
+所以从系统行为上看，这套配置系统已经具备：
+
+- 持久化
+- 运行时修改
+- 多节点传播
+
+它并不是“只在启动时读取一次的静态配置文件系统”。
 
 ## 数据存储策略
 
@@ -41,6 +217,265 @@
 - 主库和日志库拆分
 
 这意味着 `model/` 层不仅是 ORM 层，也是数据库方言适配层。
+
+## Migration 策略
+
+这里要把两种“迁移”分开看：**数据库 schema migration** 和 **业务配置数据迁移**。
+
+### Schema migration：启动时自动执行，不是定时任务
+
+当前项目的 schema migration 不是通过定时任务触发，也不是通过独立 CLI 子命令触发，而是嵌在启动流程里：
+
+- `InitResources()` 启动时先调用 `model.InitDB()`
+- 主库初始化完成后，再调用 `model.InitLogDB()`
+- 两者都会先连接数据库、设置连接池
+- 只有 `common.IsMasterNode` 为真时，才真正执行 `migrateDB()` / `migrateLOGDB()`
+
+因此运维语义上更准确的描述是：
+
+```text
+master 节点每次启动或重启时自动尝试 migration
+slave 节点只连接数据库，不执行 migration
+```
+
+几个要点：
+
+- 不是周期性任务
+  代码里没有看到 ticker/cron 定时跑 schema migration。
+- 不是外部手工步骤
+  默认部署路径下，不需要先手动执行独立迁移命令。
+- 是启动前置
+  migration 发生在服务正式监听端口之前；若失败，启动会中断。
+- 主库 / 日志库分离
+  业务主表和日志表的迁移入口不同，日志库在配置 `LOG_SQL_DSN` 时独立处理。
+
+### Schema migration 的实现风格
+
+当前风格不是“版本号 + 一串 migration 文件”，而是：
+
+- 以 `gorm.AutoMigrate(...)` 为主体
+- 配合少量手写、幂等式的兼容迁移函数
+- 针对 SQLite / MySQL / PostgreSQL 差异单独分支处理
+
+已确认的显式兼容迁移包括：
+
+- `migrateTokenModelLimitsToText()`
+  把 `tokens.model_limits` 迁为 `text`
+- `migrateSubscriptionPlanPriceAmount()`
+  把 `subscription_plans.price_amount` 迁为 `decimal(10,6)`
+- `ensureSubscriptionPlanTableSQLite()`
+  用 SQLite 兼容 DDL 和补列逻辑保证 `subscription_plans` 结构完整
+
+这类设计的特点是：
+
+- 对新增字段、索引、普通表扩展比较省心
+- 对复杂重构、数据回填、强版本顺序控制则相对弱一些
+
+### 业务配置数据迁移：目前看到的是手动接口触发
+
+除了 schema migration，项目里还存在少量“业务数据迁移”逻辑，但它们不是开机自动跑的。
+
+目前最明确的一例是：
+
+- `POST /api/option/migrate_console_setting`
+- Root 权限
+- 对应 `controller/MigrateConsoleSetting`
+
+它做的是把旧版 `options` 表里的若干控制台配置键迁移到新的 `console_setting.*` 命名空间，并清理旧键。
+
+所以从运维视角看，可以把当前迁移机制理解成：
+
+```text
+Schema 迁移：master 启动时自动执行
+业务配置数据迁移：按需通过管理接口手动触发
+```
+
+## 多节点部署建议
+
+结合启动逻辑、`NODE_TYPE` 分支和 Redis / DB 初始化代码，可以把当前项目的多节点模型理解为：
+
+```text
+同一个后端程序
+  + 1 个 master 节点
+  + N 个 slave 节点
+  + 共享主数据库
+  + 可选共享日志数据库
+  + 共享 Redis
+```
+
+这里的 `master/slave` 不是两个不同可执行程序，而是同一个程序的两种运行角色。
+
+### `master` 和 `slave` 的实际分工
+
+当前代码里，职责划分主要是“控制面是否执行维护任务”，而不是“是否提供不同 HTTP 路由”。
+
+- `master`
+  负责数据库迁移，以及渠道自动测试、订阅重置、Codex 凭证刷新、上游模型巡检等后台任务。
+- `slave`
+  不负责数据库迁移，也不启动上述控制面后台任务。
+
+但两者都会启动同一个 Gin 服务，也都会注册管理 API 和 Relay API。  
+因此它更像“数据面平行扩容 + 控制面由 master 单点负责”，而不是严格意义上的“管理服务 / 转发服务”物理拆分。
+
+### 推荐部署拓扑
+
+如果要把当前代码以比较稳妥的方式部署成多节点，比较推荐的结构是：
+
+```text
+                +------------------+
+                |  MySQL/PostgreSQL|
+                +------------------+
+                         ^
+                         |
+                +------------------+
+                |      Redis       |
+                +------------------+
+                         ^
+                         |
+      +------------------+------------------+
+      |                                     |
++-------------+                    +-------------------+
+|   master    |                    |   slave x N       |
+| new-api     |                    |   new-api         |
+| NODE_TYPE=  |                    | NODE_TYPE=slave   |
+| master      |                    |                   |
++-------------+                    +-------------------+
+```
+
+推荐做法：
+
+- 只保留一个 `master`
+- 用多个 `slave` 做水平扩容
+- 所有节点连接同一套主数据库
+- 所有节点连接同一个 Redis
+- 如启用独立日志库，所有节点也应连接同一个 `LOG_SQL_DSN`
+
+### 为什么通常只能有一个 `master`
+
+当前代码没有看到 leader election、自动选主或分布式协调机制。
+
+这意味着：
+
+- `master/slave` 是靠环境变量人工指定的
+- 如果同时跑多个 `master`，它们可能会一起执行迁移和后台任务
+- 这类并发维护行为并没有被设计成天然多主安全
+
+因此部署上更合理的约束是：**一个集群内只设置一个 `master`**。
+
+### DB 和 Redis 为什么需要共享
+
+共享数据库是多节点正确工作的前提，因为系统状态主要保存在数据库中：
+
+- 用户、令牌、渠道、能力、选项、订阅、任务、日志等都在 DB
+- `slave` 节点虽然不跑迁移，但仍然会读写业务数据
+
+共享 Redis 则主要用于缓存与多节点行为一致性：
+
+- 用户 / Token 缓存
+- 渠道亲和性缓存
+- 其他依赖 Redis 的缓存或限流辅助逻辑
+
+如果各节点各用一套 Redis，会让缓存命中、亲和性和部分状态行为变得割裂。
+
+### SQLite 不适合作为多节点共享主库
+
+代码支持 SQLite，但它更适合单机或本地开发。
+
+如果多节点部署时没有配置 `SQL_DSN`，程序会退回本地 SQLite 文件。这会导致每个节点拥有自己的本地库，而不是共享业务状态，因此不适合作为真正的多节点集群方案。
+
+多节点正式部署更合理的选择是：
+
+- MySQL
+- PostgreSQL
+
+### 多节点必须统一的关键配置
+
+如果多个节点属于同一个逻辑集群，至少以下配置应保持一致：
+
+- `SESSION_SECRET`
+  否则多机之间的会话无法互认。
+- `CRYPTO_SECRET`
+  否则加密字段和相关功能可能不兼容。
+- `SQL_DSN`
+  所有节点应连接同一主库。
+- `LOG_SQL_DSN`
+  如果使用独立日志库，应指向同一日志库。
+- `REDIS_CONN_STRING`
+  所有节点应连接同一个 Redis。
+
+### 对外暴露建议
+
+由于代码层并没有把 `slave` 节点限制成“只开 Relay 路由”，如果想实现更接近“管理节点 + 转发节点”的效果，通常需要依赖部署层做额外约束：
+
+- `master`：可暴露完整管理入口和 Relay 入口
+- `slave`：建议只对外暴露 `/v1`、`/v1beta`、`/mj`、`/suno` 等转发路径
+- `/api`、管理后台入口更适合只经由 `master` 暴露
+
+也就是说，现阶段“纯转发节点”更多是**部署策略**，而不是**代码内建角色**。
+
+### 建议暴露的接口边界
+
+如果把 `master` 作为主控制节点、把 `slave` 作为主要转发节点，比较实用的暴露策略如下。
+
+#### `master` 建议暴露
+
+- `/api/*`
+  管理 API、用户 API、系统设置、支付、订阅、性能接口等。
+- 管理后台前端入口
+  即控制台相关页面和静态资源入口。
+- 可选保留 Relay 入口
+  如 `/v1/*`、`/v1beta/*`、`/mj/*`、`/suno/*`，用于兜底、调试或低流量场景。
+
+`master` 的核心定位更适合是：
+
+```text
+控制面主节点
+  + 管理后台
+  + 配置变更入口
+  + 定时任务与迁移
+  + 可选参与少量转发
+```
+
+#### `slave` 建议暴露
+
+- `/v1/*`
+- `/v1beta/*`
+- `/mj/*`
+- `/suno/*`
+- 其他明确属于 Relay / 代理能力的入口
+
+`slave` 更适合承接绝大多数模型调用流量，也就是：
+
+```text
+数据面转发节点
+  + OpenAI 兼容请求
+  + Gemini / Claude 等兼容请求
+  + Midjourney / Suno / 视频类任务提交与查询
+```
+
+#### `slave` 不建议直接暴露
+
+- `/api/*`
+  尤其是管理员、Root、系统设置、支付回调、性能管理等控制面接口。
+- 管理后台页面入口
+- 其他仅用于平台运营和系统维护的入口
+
+这样做的原因不是代码禁止，而是为了让职责边界更清晰：
+
+- 管理流量集中到 `master`
+- 模型转发流量主要落到 `slave`
+- 降低把控制面接口暴露到所有转发节点的风险
+
+#### 一个更贴近实际的部署理解
+
+因此在推荐部署里，可以把两类节点理解成：
+
+```text
+master = 控制面主节点，兼具转发能力
+slave  = 数据面转发节点，不承担控制面维护任务
+```
+
+这也是为什么虽然 `master` 代码上同样能转发，但在实际集群里，通常仍然会让 `slave` 承担大部分转发请求。
 
 ## 为什么这一层重要
 

@@ -4,6 +4,28 @@
 
 主入口在 `main.go`。
 
+### 后端入口形态
+
+后端只有一个真正的程序入口：`main.go` 里的 `main()`。
+
+它不是 `cobra` / `urfave/cli` 那种多子命令程序，没有 `serve`、`worker`、`migrate` 这类拆开的独立命令；当前是一个单一二进制，通过少量启动参数和大量环境变量控制行为。
+
+目前能从代码里确认的启动参数主要有：
+
+- `--port`：指定监听端口
+- `--log-dir`：指定日志目录
+- `--version`：打印版本并退出
+- `--help`：打印帮助并退出
+
+也就是说，这个项目的后端运行模型更接近：
+
+```text
+一个统一后端进程
+  + 启动时初始化资源
+  + 挂载管理 API / Relay API / Web 路由
+  + 按节点角色决定是否执行迁移和后台任务
+```
+
 ### 启动阶段做了什么
 
 `main()` 的启动主线大致是：
@@ -24,6 +46,74 @@
 - `common/init.go`
 - `router/main.go`
 
+### Migration 是怎么触发的
+
+这个项目当前没有独立的 `migrate` 子命令，也不是靠定时任务周期性跑 schema migration。
+
+数据库 schema migration 的触发方式是：
+
+1. 进程启动
+2. `main()` 调 `InitResources()`
+3. `InitResources()` 内先执行 `model.InitDB()`
+4. 如配置了独立日志库，再执行 `model.InitLogDB()`
+5. 只有 `common.IsMasterNode == true` 时才真正进入 `migrateDB()` / `migrateLOGDB()`
+
+也就是说，它的 schema migration 更准确地说是：
+
+```text
+master 节点每次启动/重启时自动执行一次
+slave 节点只连库，不执行 migration
+```
+
+几个关键特征：
+
+- 不是定时任务
+  代码里没有发现按分钟/按小时自动跑 DB migration 的 ticker / cron。
+- 不是单独命令
+  也没有 `newapi migrate`、`newapi upgrade` 之类 CLI 入口。
+- 是启动前置步骤
+  migration 发生在 HTTP server 启动之前；如果初始化 DB 失败，进程会直接退出。
+- 主库和日志库分开处理
+  `InitDB()` 负责主业务库；`InitLogDB()` 在 `LOG_SQL_DSN` 存在时负责日志库的 `logs` 表迁移。
+
+### Migration 的实际执行内容
+
+`model.InitDB()` 里的迁移逻辑以 `model/main.go` 为中心，采用“GORM `AutoMigrate` + 少量手写兼容迁移”的方式。
+
+主链路如下：
+
+- 先执行定制列迁移
+  - `migrateSubscriptionPlanPriceAmount()`：把 `subscription_plans.price_amount` 从浮点型迁到 `decimal(10,6)`（MySQL / PostgreSQL）
+  - `migrateTokenModelLimitsToText()`：把 `tokens.model_limits` 迁到 `text`
+- 再执行 `DB.AutoMigrate(...)`
+  - 迁移业务主表，如 `users`、`tokens`、`channels`、`abilities`、`tasks`、`subscription_*` 等
+- 对 SQLite 单独补兼容逻辑
+  - `ensureSubscriptionPlanTableSQLite()` 用手写 DDL/补列方式保证 `subscription_plans` 结构完整
+- 日志库走单独迁移
+  - `migrateLOGDB()` 只做 `LOG_DB.AutoMigrate(&Log{})`
+
+这说明它并不是版本号驱动、逐文件编号的 migration 框架，而是：
+
+```text
+启动时自动检查当前表结构
+  + 用 AutoMigrate 补齐大多数结构
+  + 对少数跨库差异大的列做显式兼容迁移
+```
+
+### 多节点下的迁移语义
+
+`common.IsMasterNode` 由 `NODE_TYPE` 控制：
+
+- `NODE_TYPE != slave`：视为 `master`，会执行 schema migration
+- `NODE_TYPE = slave`：不会执行 schema migration
+
+因此多节点部署下，当前预期模型是：
+
+- 一个集群通常只保留一个 `master`
+- 所有 `slave` 共享同一个库，但依赖 `master` 先把 schema 升到位
+
+代码里没有看到 leader election 或分布式锁来协调“多个 master 同时迁移”的场景，所以不应把 migration 设计理解为天然多主安全。
+
 ### 运行模式特点
 
 系统有明显的“主节点/从节点”意识：
@@ -33,6 +123,46 @@
 - 多个后台任务只在主节点或特定条件下执行
 
 这说明项目天然支持多节点部署，但控制面和后台调度更偏向主节点统一执行。
+
+### 主从节点不等于进程拆分
+
+这里有一个很重要、也很容易误解的点：
+
+`master/slave` 只是同一个后端程序的“运行角色”差异，不是两个不同的可执行程序。
+
+从 `router.SetRouter()` 的实现看，进程启动后会在同一个 Gin Server 上同时注册：
+
+- `SetApiRouter()`：管理 API、用户 API、系统设置、支付、订阅、性能等接口
+- `SetDashboardRouter()`：兼容旧 dashboard 接口
+- `SetRelayRouter()`：OpenAI / Claude / Gemini / Midjourney / Suno 等 Relay 入口
+- `SetVideoRouter()`：视频相关代理接口
+
+因此从代码结构上看，管理面和转发面是共存在一个进程里的，而不是天然拆成：
+
+```text
+一个专用管理服务器
+  +
+多个专用转发服务器
+```
+
+### `slave` 节点实际减少了什么
+
+`NODE_TYPE=slave` 的效果主要是减少“控制面维护职责”，而不是只保留 Relay 路由。
+
+当前代码中，`slave` 节点主要会：
+
+- 跳过数据库迁移
+- 不启动订阅重置、渠道自动测试、Codex 凭证刷新、上游模型巡检等后台任务
+
+但路由层并没有把 `/api` 和 `/v1` 做严格分离；也就是说，`slave` 不是“代码意义上的纯转发节点”，而更像：
+
+```text
+同一个单体后端
+  master: 负责迁移 + 后台维护任务 + 同样提供 API/Relay
+  slave:  不负责迁移和部分后台任务 + 仍然提供 API/Relay
+```
+
+如果部署上需要“1 个管理节点 + N 个纯转发节点”的硬隔离，通常还需要依赖网关、反向代理或额外代码改造来限制 `slave` 节点暴露的路由范围。
 
 ## 后端分层职责
 
@@ -56,6 +186,8 @@
 1. 平台管理 API
 2. AI Relay API
 3. Web 控制台入口
+
+换句话说，从当前实现来看，管理 API 和转发 API 不是两个后端服务，而是同一个后端服务里的两类路由面。
 
 ### Middleware
 

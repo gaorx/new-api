@@ -17,6 +17,7 @@
 9. [09 - 横切能力与总体结论](/Users/gaorx/Works/my/new-api/research/project-architecture-09-cross-cutting-capabilities-and-summary.md)
 10. [10 - 认证、安全与权限模型](/Users/gaorx/Works/my/new-api/research/project-architecture-10-auth-and-security.md)
 11. [11 - 异步任务与后台作业](/Users/gaorx/Works/my/new-api/research/project-architecture-11-async-tasks-and-background-jobs.md)
+12. [12 - 中间件职责与请求链路](/Users/gaorx/Works/my/new-api/research/project-architecture-12-middleware-and-request-flow.md)
 
 ## 一句话概括
 

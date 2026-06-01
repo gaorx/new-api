@@ -17,6 +17,9 @@
 5. `logs` 表可能位于主库，也可能位于独立日志库：
    - 如果 `LOG_SQL_DSN` 为空，则与主库共用同一张 `logs` 表
    - 如果 `LOG_SQL_DSN` 不为空，则日志表会迁移到独立日志库
+6. “直接外键”与“隐式外键”的判定依据：
+   - 直接外键：结构体 `gorm` tag、显式 `FOREIGN KEY / REFERENCES` DDL、迁移 SQL 中真正声明的数据库外键约束
+   - 隐式外键：代码通过 `user_id`、`channel_id`、`plan_id`、`vendor_id`、`provider_id` 等字段在应用层自行维护的逻辑关联
 
 ---
 
@@ -107,6 +110,100 @@
 | `subscription_orders` | `SubscriptionOrder` | 订阅购买订单 |
 | `user_subscriptions` | `UserSubscription` | 用户订阅实例 |
 | `subscription_pre_consume_records` | `SubscriptionPreConsumeRecord` | 订阅额度预扣记录 |
+
+---
+
+## 关系设计总览
+
+### 1. 直接外键（数据库约束）现状
+
+基于本次对 `model/*.go`、`model/main.go` 以及项目内显式 SQL 的核对，当前项目**没有发现已声明的数据库层外键约束**：
+
+- 没有搜到 `gorm:"foreignKey:..."`、`references:`、`constraint:` 等 GORM 外键声明
+- 没有搜到手写的 `FOREIGN KEY` / `REFERENCES` 建表或迁移 SQL
+- `AutoMigrate(...)` 主要负责建表、补列、建索引，不承担关系约束的统一声明
+
+这意味着当前 DB 设计是一个**以应用层维护关系完整性为主**的方案。优点是兼容 SQLite / MySQL / PostgreSQL 更简单；代价是孤儿数据、级联删除、跨库一致性都要靠业务代码保证。
+
+补充说明：
+
+- `logs` 表可能位于独立日志库；即使未来希望对 `logs.user_id`、`logs.token_id`、`logs.channel_id` 加硬外键，也会受到“跨库不可直接外键约束”的天然限制。
+- `subscription_plans` 在 SQLite 下是手写兼容 DDL 创建，也没有声明外键。
+
+### 2. 隐式外键清单（指向实际表）
+
+这些关系在业务上真实存在，但数据库没有硬约束。
+
+| 来源字段 | 目标字段 | 关系类型 | 说明 |
+|---|---|---|---|
+| `users.inviter_id` | `users.id` | 隐式自关联 | 用户邀请关系，记录邀请人 |
+| `tokens.user_id` | `users.id` | 隐式外键 | 一个用户可以持有多个平台 Token |
+| `passkey_credentials.user_id` | `users.id` | 隐式外键 | 一个用户对应一个 Passkey 凭证记录 |
+| `two_fas.user_id` | `users.id` | 隐式外键 | 一个用户对应一条 2FA 主记录 |
+| `two_fa_backup_codes.user_id` | `users.id` | 隐式外键 | 一个用户对应多条 2FA 备用码 |
+| `user_oauth_bindings.user_id` | `users.id` | 隐式外键 | OAuth 绑定归属某个用户 |
+| `user_oauth_bindings.provider_id` | `custom_oauth_providers.id` | 隐式外键 | OAuth 绑定归属某个自定义提供商 |
+| `checkins.user_id` | `users.id` | 隐式外键 | 签到记录归属用户 |
+| `redemptions.user_id` | `users.id` | 隐式外键 | 兑换码创建者或归属用户 |
+| `redemptions.used_user_id` | `users.id` | 隐式外键 | 实际使用兑换码的用户 |
+| `top_ups.user_id` | `users.id` | 隐式外键 | 充值订单归属用户 |
+| `abilities.channel_id` | `channels.id` | 隐式外键 | 能力索引从渠道表展开而来 |
+| `models.vendor_id` | `vendors.id` | 隐式外键 | 模型元数据归属供应商 |
+| `logs.user_id` | `users.id` | 隐式外键 | 日志归属用户 |
+| `logs.channel_id` | `channels.id` | 隐式外键 | 日志关联调用渠道 |
+| `logs.token_id` | `tokens.id` | 隐式外键 | 日志关联调用 Token |
+| `quota_data.user_id` | `users.id` | 隐式外键 | 看板聚合数据归属用户 |
+| `tasks.user_id` | `users.id` | 隐式外键 | 异步任务归属用户 |
+| `tasks.channel_id` | `channels.id` | 隐式外键 | 异步任务由某个渠道提交 |
+| `tasks.private_data.subscription_id` | `user_subscriptions.id` | 隐式外键（JSON 内） | 任务若走订阅计费，会把订阅实例 ID 存进 JSON |
+| `tasks.private_data.token_id` | `tokens.id` | 隐式外键（JSON 内） | 任务若涉及令牌计费退款，会把 Token ID 存进 JSON |
+| `midjourneys.user_id` | `users.id` | 隐式外键 | Midjourney 任务归属用户 |
+| `midjourneys.channel_id` | `channels.id` | 隐式外键 | Midjourney 任务关联渠道 |
+| `subscription_orders.user_id` | `users.id` | 隐式外键 | 订阅订单归属用户 |
+| `subscription_orders.plan_id` | `subscription_plans.id` | 隐式外键 | 订阅订单购买的是某个套餐 |
+| `user_subscriptions.user_id` | `users.id` | 隐式外键 | 订阅实例归属用户 |
+| `user_subscriptions.plan_id` | `subscription_plans.id` | 隐式外键 | 订阅实例来源于某个套餐模板 |
+| `subscription_pre_consume_records.user_id` | `users.id` | 隐式外键 | 预扣记录归属用户 |
+| `subscription_pre_consume_records.user_subscription_id` | `user_subscriptions.id` | 隐式外键 | 预扣记录绑定某条用户订阅实例 |
+
+### 3. 隐式业务关联（目标不是独立主表）
+
+这一类字段不是传统外键，但在业务上共享同一套“字符串域”或“快照域”，也属于理解 DB 设计时必须关注的关系。
+
+| 字段 | 共享域/关联对象 | 说明 |
+|---|---|---|
+| `users.group` | 用户组字符串域 | 用户所属逻辑分组 |
+| `tokens.group` | 用户组字符串域 | Token 请求默认使用的逻辑分组 |
+| `channels.group` | 用户组字符串域 | 渠道可服务的分组集合，逗号分隔 |
+| `abilities.group` | 用户组字符串域 | 从 `channels.group` 展开得到的单个分组索引 |
+| `logs.group` | 用户组字符串域 | 请求发生时使用的分组快照 |
+| `tasks.group` | 用户组字符串域 | 异步任务提交时的分组快照 |
+| `perf_metrics.group` | 用户组字符串域 | 性能指标聚合维度之一 |
+| `user_subscriptions.upgrade_group` | 用户组字符串域 | 订阅生效后要把用户提升到的组 |
+| `user_subscriptions.prev_user_group` | 用户组字符串域 | 订阅升级前用户原始分组快照 |
+| `channels.models` | 模型名字符串域 | 渠道支持的模型集合，逗号分隔 |
+| `abilities.model` | 模型名字符串域 | 从 `channels.models` 展开的单模型索引 |
+| `models.model_name` | 模型名字符串域 | 平台模型主数据 |
+| `logs.model_name` | 模型名字符串域 | 请求发生时的模型名快照 |
+| `quota_data.model_name` | 模型名字符串域 | 看板聚合维度之一 |
+| `perf_metrics.model_name` | 模型名字符串域 | 性能指标聚合维度之一 |
+| `tasks.properties.upstream_model_name` | 上游模型名字符串域 | 任务提交时的上游模型快照 |
+| `tasks.properties.origin_model_name` | 平台模型名字符串域 | 任务提交时的平台模型快照 |
+| `logs.username` | `users.username` 快照 | 为了查询/展示方便保存在日志里，不是硬外键 |
+| `quota_data.username` | `users.username` 快照 | 聚合时写入用户名快照 |
+| `logs.token_name` | `tokens.name` 快照 | 令牌名快照，便于审计 |
+| `logs.channel_name` | `channels.name` 只读关联结果 | 字段本身不落库，由查询 join/映射得到 |
+
+### 4. 关系维护方式总结
+
+从代码实现看，当前关系完整性主要通过下面几种手段维护：
+
+- 先查主表再写从表，例如创建 `TwoFA` 时会先确认 `users` 中存在对应用户
+- 在事务里同时更新关联表，例如签到时同时写 `checkins` 并增加 `users.quota`
+- 通过唯一索引约束部分业务关系，例如 `checkins(user_id, checkin_date)`、`user_oauth_bindings` 两组联合唯一索引
+- 通过级联业务代码而不是数据库级联删除，例如删除自定义 OAuth 提供商前先删 `user_oauth_bindings`
+
+因此，读这套 DB 时要把“字段名像外键，但数据库不拦截脏数据”作为一个基本前提。
 
 ---
 

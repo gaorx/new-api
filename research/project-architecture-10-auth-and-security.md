@@ -110,6 +110,130 @@ OAuth 不是单一 provider，而是两层体系：
 
 所以这里不是“接几个 OAuth 按钮”，而是一套可扩展的身份接入层。
 
+## OAuth 在这个项目里到底扮演什么角色
+
+这里最容易混淆的一点是：仓库里出现了两类“OAuth”。
+
+### 1. 用户身份 OAuth
+
+`oauth/` 目录下这套主流程，作用是：
+
+- 让 GitHub、Discord、OIDC、LinuxDO、Telegram、WeChat 等外部身份系统为本平台用户做认证
+- 让用户使用第三方账号登录本系统
+- 让已登录用户把第三方账号绑定到本系统账号
+
+它不是“本系统对外提供 OAuth 服务”，而是“本系统作为 OAuth Client，接入外部身份提供方”。
+
+这点可以从几处代码直接确认：
+
+- 路由入口是 `GET /api/oauth/:provider`，位于 `router/api-router.go`
+- 统一回调控制器是 `controller.HandleOAuth`
+- 处理步骤是“校验 state -> 用 code 换 token -> 拉 provider 用户资料 -> 查找或创建本地用户 -> 建立登录态”
+- 自定义 provider 绑定关系单独落在 `user_oauth_bindings` 表
+
+换句话说，这部分是：
+
+```text
+外部身份系统 -> 帮助用户登录 / 绑定 -> 本系统
+```
+
+而不是：
+
+```text
+本系统 -> 作为 OAuth 提供方 -> 给别的业务系统登录
+```
+
+### 2. 渠道凭证 OAuth
+
+仓库里还有一套单独的 `Codex OAuth`，位于：
+
+- `controller/codex_oauth.go`
+- `service/codex_oauth.go`
+
+这一套不是用户登录，也不属于平台账户体系；它的作用是：
+
+- 管理员为某个上游渠道发起 OAuth 授权
+- 用授权码交换 access token / refresh token
+- 把得到的上游凭证保存到渠道配置中，供 relay 调用上游模型时使用
+
+所以它的方向是：
+
+```text
+本系统 -> 接入上游平台 -> 获得渠道凭证
+```
+
+而不是：
+
+```text
+外部系统 -> 通过本系统 OAuth -> 接入本系统
+```
+
+## 两类 OAuth 的关系图
+
+### 图 1：用户登录/绑号 OAuth
+
+```mermaid
+flowchart LR
+  U[用户浏览器]
+  F[前端 OAuth 页面]
+  B[本系统后端 /api/oauth/:provider]
+  P[外部 OAuth Provider<br/>GitHub / Discord / OIDC / LinuxDO]
+  DB[(本地用户与绑定数据)]
+  S[(Session 登录态)]
+
+  U --> F
+  F -->|请求 state| B
+  B -->|保存 oauth_state 到 session| S
+  F -->|跳转授权页| P
+  P -->|带 code/state 回跳| F
+  F -->|调用 /api/oauth/:provider| B
+  B -->|校验 state| S
+  B -->|code 换 token| P
+  B -->|token 拉用户信息| P
+  B -->|查找或创建本地用户| DB
+  B -->|已登录用户则绑定外部账号| DB
+  B -->|建立本系统登录态| S
+  B --> F
+  F --> U
+```
+
+这张图表达的是：第三方账号是“登录本系统的身份证明来源”，最终登录态仍然建立在本系统里。
+
+### 图 2：Codex 渠道 OAuth
+
+```mermaid
+flowchart LR
+  A[管理员]
+  C[控制台渠道配置页]
+  B[本系统后端<br/>/api/channel/.../codex/oauth/*]
+  O[OpenAI / Codex OAuth 服务]
+  CH[(渠道配置 / 凭证存储)]
+  R[Relay 调用链路]
+
+  A --> C
+  C -->|start| B
+  B -->|生成 state + PKCE verifier| C
+  C -->|管理员访问授权地址| O
+  O -->|返回 code/state| A
+  A -->|把回调信息贴回控制台| C
+  C -->|complete| B
+  B -->|校验 state/verifier| B
+  B -->|code 换 access_token / refresh_token| O
+  B -->|保存 OAuth 凭证| CH
+  R -->|调用上游前读取渠道凭证| CH
+```
+
+这张图表达的是：这里的 OAuth 服务于“渠道接入上游”，不是服务于“用户登录本平台”。
+
+## 一句话结论
+
+如果只问“这个项目中的 OAuth 是干什么的”，最准确的回答是：
+
+- 主体上的 OAuth：让外部身份系统接入本系统，为本系统用户提供登录、注册联动和账号绑定能力
+- 额外的一小部分 OAuth：让本系统接入上游平台，为渠道获取和刷新访问凭证
+
+它不是“让外部业务系统通过 OAuth 接入本系统用户体系”的设计。
+
 ### Passkey / WebAuthn
 
 Passkey 相关流程集中在 `controller/passkey.go`，包括：

@@ -59,20 +59,124 @@ RelayInfo = 请求上下文 + 渠道上下文 + 计费上下文 + 协议上下�
 以 `/v1/chat/completions` 为例，主流程大概是：
 
 1. `TokenAuth` 校验调用令牌
-2. `Distribute` 解析请求中的模型和分组，选出渠道
-3. `controller.Relay()` 读取请求体并校验格式
-4. `GenRelayInfo()` 组装上下文
-5. 敏感词检查、token 预估、价格计算
-6. `PreConsumeBilling()` 预扣费
-7. 获取渠道并构建适配器
-8. 适配器转换请求并调用上游
-9. 解析 usage / 错误 / 流式结果
-10. 成功则结算，失败则退款并视情况重试
+2. `ModelRequestRateLimit()` 校验当前用户在 Relay 主链路上的请求频率
+3. `Distribute` 解析请求中的模型和分组，选出渠道
+4. `controller.Relay()` 读取请求体并校验格式
+5. `GenRelayInfo()` 组装上下文
+6. 敏感词检查、token 预估、价格计算
+7. `PreConsumeBilling()` 预扣费
+8. 获取渠道并构建适配器
+9. 适配器转换请求并调用上游
+10. 解析 usage / 错误 / 流式结果
+11. 成功则结算，失败则退款并视情况重试
 
 这个流程里有两个很重要的架构点：
 
 1. 请求体会被缓存成可重复读取的 body storage，方便重试时重复发送。
 2. 计费发生在调用前后两个阶段：先预扣，再按实际 usage 结算。
+
+## 转发时的“限流”不只有入口 429
+
+如果只看路由，中间件层最直观的限流是 `ModelRequestRateLimit()`。
+
+但从 Relay 运行时看，项目实际上有三层互相配合的“节流/削峰/自保护”机制：
+
+1. 入口限流
+2. 渠道失败后的重试切换
+3. 坏渠道自动封禁
+
+这三层叠在一起，才构成完整的转发治理。
+
+## 1. 入口限流：先拦住调用方
+
+在 `/v1` 与 `/v1beta` 同步 Relay 路由里，请求顺序是：
+
+1. `TokenAuth()`
+2. `ModelRequestRateLimit()`
+3. `Distribute()`
+4. `controller.Relay()`
+
+也就是说：
+
+- 先识别是谁在调
+- 再按用户做模型调用限流
+- 通过后才去选 channel 和真正转发
+
+这层机制的重点不是“按模型名单独记桶”，而是“按用户限制其进入 Relay 主链路的频率”。
+
+## 2. 失败后的重试：把 429 当成可切换渠道的信号
+
+同步 Relay 在 `controller/relay.go` 里有一个主重试循环：
+
+- 每轮都可以重新选可用 channel
+- 每轮都会恢复请求体
+- 成功则立即返回
+- 失败则根据错误类型判断要不要切到下一条 channel
+
+默认策略下，`429` 是可重试的：
+
+- `shouldRetry()` 最终会走 `operation_setting.ShouldRetryByStatusCode(code)`
+- 默认重试范围覆盖 `429`
+- `504` 与 `524` 被硬编码排除，不重试
+
+这意味着项目把“上游限流”更多理解成：
+
+```text
+当前这条渠道忙了
+  -> 换下一条渠道再试
+```
+
+而不是立刻把错误原样返回给最终调用方。
+
+## 3. 重试不是无条件的
+
+以下场景会直接终止切换渠道：
+
+- `RetryTimes` 已经耗尽
+- 请求锁定了 `specific_channel_id`
+- Channel Affinity 配置要求失败后不要跳出黏性渠道
+- 错误显式带有 `skip-retry`
+- 某些错误码被声明为永不重试
+
+所以它不是“无限兜底代理”，而是“带明确边界的多渠道故障转移”。
+
+## 4. 自动封禁：避免坏渠道持续承压
+
+一旦某轮请求失败，Relay 会调用 `processChannelError()`。
+
+这个函数会做两件关键事：
+
+- 记录结构化渠道错误日志
+- 如果满足条件，则异步调用 `DisableChannel()`
+
+是否封禁由 `service.ShouldDisableChannel()` 决定，默认逻辑是：
+
+- 开启了 `AutomaticDisableChannelEnabled`
+- 错误是典型渠道错误，或者
+- 状态码命中了 `AutomaticDisableStatusCodes`，或者
+- 错误消息命中了 `AutomaticDisableKeywords`
+
+默认状态码配置里，自动禁用更偏向鉴权/失效类问题，例如 `401`。
+
+这也说明一个很关键的设计取向：
+
+- `429` 默认更偏向“重试/切换渠道”
+- `401`、坏 key、认证失败这类错误更偏向“禁用渠道”
+
+## 5. 异步任务 Relay 的处理思路类似，但更保守
+
+Midjourney、Suno、视频等任务型转发没有统一挂 `ModelRequestRateLimit()`，但提交阶段也有自己的重试逻辑。
+
+在 `shouldRetryTaskRelay()` 里：
+
+- `429` 会被视为可重试
+- `307` 会被视为可重试
+- `5xx` 大多可重试
+- `400`、`408`、本地错误不重试
+
+并且最终返回用户前，任务型接口还会把 `429` 文案统一改写成“当前分组上游负载已饱和，请稍后再试”。
+
+所以任务型转发虽然不走入口频控，但仍然有一套“遇到上游限流时先内部消化一轮”的机制。
 
 ## RelayFormat 与 RelayMode
 
