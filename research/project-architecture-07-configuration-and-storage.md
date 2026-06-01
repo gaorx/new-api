@@ -377,6 +377,523 @@ Schema 迁移：master 启动时自动执行
 
 如果各节点各用一套 Redis，会让缓存命中、亲和性和部分状态行为变得割裂。
 
+### Redis 在当前项目里到底承担什么职责
+
+Redis 在这个项目里不是“必须有”的主存储，而是一层可选增强。
+
+- 配置了 `REDIS_CONN_STRING` 时启用 Redis
+- 没配置时，`common.InitRedisClient()` 会把 `common.RedisEnabled` 设为 `false`
+- 关闭 Redis 后，部分能力会退回数据库直读或进程内缓存 / 限流实现
+
+因此从系统定位上看，Redis 主要承担三类职责：
+
+1. 热路径对象缓存
+2. 限流计数与短时间窗口状态
+3. 短周期实时指标聚合
+
+需要特别注意的是：当前项目的登录 session 不是放在 Redis，而是 Gin 的 cookie session store。也就是说，Redis 不承担控制台登录态持久化职责。
+
+### Redis 的接入方式
+
+`common/redis.go` 封装了本项目最基础的 Redis 访问方法，包括：
+
+- `SET` / `GET`
+- `DEL`
+- `HSET` / `HGETALL`
+- `INCRBY`
+- `HINCRBY`
+- `HSET field`
+
+其中有两种使用风格：
+
+1. **直接使用 `common.RDB`**
+   典型场景是限流、性能指标聚合。
+2. **走项目封装**
+   典型场景是用户缓存、Token 缓存，以及 `pkg/cachex` 提供的 namespaced string cache。
+
+从 value 组织方式看，当前 Redis 数据大致分成三类：
+
+- `Hash`
+  用于缓存结构化对象，如用户、Token、性能 bucket。
+- `String`
+  用于保存简单计数、整数 ID 或 JSON 串。
+- `List`
+  用于滑动时间窗限流。
+
+### Redis key 总览
+
+下面按“key 模式 / 含义 / value 类型 / value 结构”整理当前代码里实际会写入 Redis 的 key。
+
+#### 1. 用户缓存
+
+key 模式：
+
+```text
+user:<userId>
+```
+
+含义：
+
+- 缓存用户基础信息
+- 用于减少登录态用户信息、分组、额度、设置等字段的数据库读取
+
+value 类型：
+
+- `Hash`
+
+字段结构：
+
+- `Id`
+- `Group`
+- `Email`
+- `Quota`
+- `Status`
+- `Username`
+- `Setting`
+
+value 形态：
+
+- 所有字段最终都按字符串写入 Redis
+- 例如：
+
+```text
+Id = "12"
+Group = "default"
+Email = "alice@example.com"
+Quota = "100000"
+Status = "1"
+Username = "alice"
+Setting = "{\"language\":\"zh-CN\"}"
+```
+
+补充说明：
+
+- `Setting` 本质上是 `dto.UserSetting` 的 JSON 字符串
+- 单字段更新时，会直接更新 hash 里的某个 field，如 `Quota`、`Group`、`Username`
+- TTL 使用 `common.RedisKeyCacheSeconds()`，其值等于 `SYNC_FREQUENCY`，默认 60 秒
+
+#### 2. Token 缓存
+
+key 模式：
+
+```text
+token:<hmac(tokenKey)>
+```
+
+含义：
+
+- 缓存 API Token 对象
+- 用于请求鉴权和额度检查时减少数据库访问
+
+value 类型：
+
+- `Hash`
+
+字段结构来自 `model.Token`，主要包括：
+
+- `Id`
+- `UserId`
+- `Status`
+- `Name`
+- `CreatedTime`
+- `AccessedTime`
+- `ExpiredTime`
+- `RemainQuota`
+- `UnlimitedQuota`
+- `ModelLimitsEnabled`
+- `ModelLimits`
+- `AllowIps`
+- `UsedQuota`
+- `Group`
+- `CrossGroupRetry`
+
+value 形态：
+
+- 仍然全部按字符串形式写入 Redis
+- bool 会被写成 `"true"` / `"false"`
+- 指针字段若为空，会被写成空字符串
+
+补充说明：
+
+- Redis key 用的不是明文 token，而是 `common.GenerateHMAC(token.Key)` 的结果
+- 写缓存前会调用 `token.Clean()`，因此缓存对象本身不会保存明文 `Key`
+- `RemainQuota` 会通过 `HINCRBY` 做原子增减
+- TTL 同样使用 `SYNC_FREQUENCY`，默认 60 秒
+
+#### 3. 通用 IP 限流
+
+key 模式：
+
+```text
+rateLimit:<mark><clientIP>
+```
+
+例子：
+
+```text
+rateLimit:GW127.0.0.1
+rateLimit:GA203.0.113.8
+rateLimit:CT198.51.100.10
+```
+
+含义：
+
+- 基于客户端 IP 的全局 / 关键接口 / 上传下载限流
+
+当前看到的 `mark` 包括：
+
+- `GW`：Global Web
+- `GA`：Global API
+- `CT`：Critical
+- `DW`：Download
+- `UP`：Upload
+
+value 类型：
+
+- `List`
+
+value 形态：
+
+- 列表元素是请求时间字符串
+- 时间格式固定为：
+
+```text
+2006-01-02T15:04:05.000Z
+```
+
+补充说明：
+
+- 通过 `LLen`、`LPush`、`LIndex`、`LTrim` 组合实现滑动窗口风格限流
+- key 的过期时间统一使用 `common.RateLimitKeyExpirationDuration`，当前默认 20 分钟
+
+#### 4. 按用户 ID 的限流
+
+key 模式：
+
+```text
+rateLimit:<mark>:user:<userId>
+```
+
+例子：
+
+```text
+rateLimit:SR:user:42
+```
+
+含义：
+
+- 对已经认证的用户按 userId 做限流
+- 当前明确看到 `SearchRateLimit` 走这套 key
+
+value 类型：
+
+- `List`
+
+value 形态：
+
+- 与 IP 限流完全一致，也是时间字符串列表
+
+#### 5. 邮箱验证码发送限流
+
+key 模式：
+
+```text
+emailVerification:EV:<clientIP>
+```
+
+例子：
+
+```text
+emailVerification:EV:127.0.0.1
+```
+
+含义：
+
+- 控制同一 IP 在短时间内发送邮箱验证码的频率
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- 一个整数计数器字符串，如 `"1"`、`"2"`、`"3"`
+
+TTL：
+
+- 30 秒
+
+补充说明：
+
+- 第一次 `INCR` 成功后才设置过期时间
+- 逻辑限制是 30 秒内最多 2 次
+
+#### 6. 通知发送限流
+
+key 模式：
+
+```text
+notify_limit:<userId>:<notifyType>:<YYYYMMDDHH>
+```
+
+例子：
+
+```text
+notify_limit:42:email:2026060113
+```
+
+含义：
+
+- 控制用户在某个小时窗口内的通知发送次数
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- 整数计数器字符串
+
+TTL：
+
+- `NOTIFICATION_LIMIT_DURATION_MINUTE` 分钟
+- 默认初始化值是 10 分钟
+
+#### 7. 渠道亲和性缓存
+
+key 模式：
+
+```text
+new-api:channel_affinity:v1:<suffix>
+```
+
+其中 `<suffix>` 的拼接规则是：
+
+```text
+[ruleName][:modelName][:usingGroup]:affinityValue
+```
+
+是否包含 `ruleName` / `modelName` / `usingGroup`，由具体规则的：
+
+- `IncludeRuleName`
+- `IncludeModelName`
+- `IncludeUsingGroup`
+
+决定。
+
+含义：
+
+- 让同一类“亲和 key”尽量命中相同的 channel
+- 用于多 key / 多 channel 场景下提高请求黏性和一致性
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- 被选中的 `channelID`，以整数串存储
+- 例如：
+
+```text
+"9527"
+```
+
+补充说明：
+
+- 这类 key 通过 `pkg/cachex.HybridCache[int]` 管理
+- Redis codec 是 `IntCodec`
+- TTL 由规则自身 `TTLSeconds` 或全局 `DefaultTTLSeconds` 决定
+- 这里的 key 后缀直接包含原始 `affinityValue`，不是哈希值
+
+#### 8. 渠道亲和性 usage 统计缓存
+
+key 模式：
+
+```text
+new-api:channel_affinity_usage_cache_stats:v1:<ruleName>\n<usingGroup>\n<keyFp>
+```
+
+含义：
+
+- 记录某个渠道亲和性 key 在窗口期内的命中与 usage 聚合信息
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- JSON 串，对应 `ChannelAffinityUsageCacheCounters`
+
+字段包括：
+
+- `cached_token_rate_mode`
+- `hit`
+- `total`
+- `window_seconds`
+- `prompt_tokens`
+- `completion_tokens`
+- `total_tokens`
+- `cached_tokens`
+- `prompt_cache_hit_tokens`
+- `last_seen_at`
+
+示意：
+
+```json
+{
+  "cached_token_rate_mode": "cached_over_prompt",
+  "hit": 12,
+  "total": 18,
+  "window_seconds": 3600,
+  "prompt_tokens": 12000,
+  "completion_tokens": 4500,
+  "total_tokens": 16500,
+  "cached_tokens": 6000,
+  "prompt_cache_hit_tokens": 0,
+  "last_seen_at": 1717230000
+}
+```
+
+补充说明：
+
+- `keyFp` 不是原始 affinity value，而是其 SHA1 前 8 位摘要
+- 这类 key 同样由 `pkg/cachex.HybridCache` 管理
+- TTL 等于该条统计对应的窗口秒数，通常与 affinity TTL 对齐
+
+#### 9. 订阅套餐缓存
+
+key 模式：
+
+```text
+new-api:subscription_plan:v1:<planId>
+```
+
+含义：
+
+- 缓存订阅套餐 `SubscriptionPlan`
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- `SubscriptionPlan` 的 JSON 串
+
+字段很多，典型包括：
+
+- `Id`
+- `Title`
+- `Subtitle`
+- `PriceAmount`
+- `Currency`
+- `DurationUnit`
+- `DurationValue`
+- `Enabled`
+- `UpgradeGroup`
+- `TotalAmount`
+
+TTL：
+
+- 由 `SUBSCRIPTION_PLAN_CACHE_TTL` 控制
+- 默认 300 秒
+
+#### 10. 订阅套餐标题信息缓存
+
+key 模式：
+
+```text
+new-api:subscription_plan_info:v1:sub:<userSubscriptionId>
+```
+
+含义：
+
+- 缓存“某条用户订阅记录对应的套餐标题信息”
+
+value 类型：
+
+- `String`
+
+value 形态：
+
+- JSON 串，对应：
+
+```json
+{
+  "PlanId": 3,
+  "PlanTitle": "Pro Monthly"
+}
+```
+
+TTL：
+
+- 由 `SUBSCRIPTION_PLAN_INFO_CACHE_TTL` 控制
+- 默认 120 秒
+
+#### 11. 实时性能指标 bucket
+
+key 模式：
+
+```text
+perf:<model>:<group>:<bucketTs>
+```
+
+例子：
+
+```text
+perf:gpt-4o:default:1717228800
+```
+
+含义：
+
+- 暂存某个模型、某个分组、某个时间 bucket 的实时性能聚合数据
+- 后续查询会把 Redis 中“当前活动 bucket”与数据库历史聚合结果合并
+
+value 类型：
+
+- `Hash`
+
+字段结构：
+
+- `req`
+- `ok`
+- `lat`
+- `ttft`
+- `ttft_n`
+- `out`
+- `gen_ms`
+
+含义分别是：
+
+- `req`：请求数
+- `ok`：成功数
+- `lat`：总延迟毫秒
+- `ttft`：TTFT 总和毫秒
+- `ttft_n`：TTFT 样本数
+- `out`：输出 token 总数
+- `gen_ms`：生成耗时总和毫秒
+
+value 形态：
+
+- 全部是整数计数字段，按 Redis hash field 存储
+
+TTL：
+
+- 1 小时
+
+### 当前没有放进 Redis 的典型状态
+
+有几个点很容易被误判：
+
+- 登录 session 不在 Redis
+  当前明确使用的是 cookie store
+- `model/channel_cache.go` 的渠道缓存是进程内内存缓存，不是 Redis
+- 一些旧的 `constant/cache_key.go` 常量，如 `user_group:%d`，当前代码中并没有看到实际 Redis 读写落到这些 key
+
+因此如果线上排查 Redis 数据，优先应该围绕上面列出的实际 key 模式，而不是只看常量名或猜测性的缓存命名。
+
 ### SQLite 不适合作为多节点共享主库
 
 代码支持 SQLite，但它更适合单机或本地开发。

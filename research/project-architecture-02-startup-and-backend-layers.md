@@ -46,6 +46,82 @@
 - `common/init.go`
 - `router/main.go`
 
+### 核心连接资源的持有方式
+
+目前后端对数据库、Redis 以及一部分运行时状态的管理方式，整体上更接近：
+
+```text
+包级全局变量
+  + 启动时初始化一次
+  + 业务代码中直接引用
+```
+
+而不是典型的依赖注入风格。
+
+已经确认的几个核心资源如下：
+
+- 主业务库：`model.DB`
+- 日志库：`model.LOG_DB`
+- Redis 客户端：`common.RDB`
+- Redis 开关：`common.RedisEnabled`
+- 数据库类型标志：`common.UsingSQLite`、`common.UsingMySQL`、`common.UsingPostgreSQL`
+
+这些对象或状态都定义为包级变量，随后在启动流程中完成赋值。
+
+### DB / Redis 的初始化顺序
+
+从 `InitResources()` 可以确认，资源初始化顺序大致是：
+
+1. `common.InitEnv()`
+2. `model.InitDB()`
+3. `model.InitOptionMap()`
+4. `model.InitLogDB()`
+5. `common.InitRedisClient()`
+
+也就是说：
+
+- `model.InitDB()` 负责建立主库连接，并把连接放入全局变量 `model.DB`
+- `model.InitLogDB()` 负责建立日志库连接；若未配置 `LOG_SQL_DSN`，则直接令 `model.LOG_DB = model.DB`
+- `common.InitRedisClient()` 负责建立 Redis 连接，并把客户端放入全局变量 `common.RDB`
+
+所以运行时语义更像：
+
+```text
+进程启动
+  -> 初始化全局 DB / LOG_DB / RDB
+  -> 后续业务层直接使用这些全局连接
+```
+
+### 业务代码如何使用这些连接
+
+`model/` 层大量代码直接引用 `DB`：
+
+- `DB.Where(...)`
+- `DB.Create(...)`
+- `DB.Transaction(...)`
+
+这说明多数数据访问函数并不通过参数传入 `*gorm.DB`，而是直接依赖全局主库句柄。
+
+Redis 侧也是类似风格：
+
+- 业务代码直接访问 `common.RDB`
+- 或先判断 `common.RedisEnabled`
+- `common/redis.go` 中再封装一层 `RedisSet`、`RedisGet`、`RedisDel` 等辅助函数
+
+因此更准确地说，这个项目对“连接资源”的抽象不是“连接对象逐层传递”，而是“全局单例 + 少量辅助封装”。
+
+### 补充：不是完全没有局部注入
+
+虽然整体风格是全局资源持有，但少量新代码会把全局连接再传入局部组件中使用。
+
+例如某些缓存封装会把 `common.RDB` 传给内部结构体或 helper；不过它的来源仍然是全局 Redis 客户端，而不是从 request scope 或应用容器中分发出来。
+
+因此从架构判断上，应把当前项目理解为：
+
+- 主体是包级全局资源模式
+- 局部存在少量“基于全局对象再包装”的写法
+- 不是严格的依赖注入式后端
+
 ### Migration 是怎么触发的
 
 这个项目当前没有独立的 `migrate` 子命令，也不是靠定时任务周期性跑 schema migration。

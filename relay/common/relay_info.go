@@ -86,106 +86,106 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId           int
-	TokenKey          string
-	TokenGroup        string
-	UserId            int
-	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup         string // 用户所在分组
-	TokenUnlimited    bool
-	StartTime         time.Time
-	FirstResponseTime time.Time
-	isFirstResponse   bool
+	TokenId           int       // 令牌 ID
+	TokenKey          string    // 令牌 Key
+	TokenGroup        string    // 令牌所属分组
+	UserId            int       // 用户 ID
+	UsingGroup        string    // 使用的分组，当 auto 跨分组重试时会变动
+	UserGroup         string    // 用户所在分组
+	TokenUnlimited    bool      // 令牌是否不限额
+	StartTime         time.Time // 请求开始时间
+	FirstResponseTime time.Time // 首次响应时间
+	isFirstResponse   bool      // 是否为首次响应
 	//SendLastReasoningResponse bool
-	IsStream               bool
-	IsGeminiBatchEmbedding bool
-	IsPlayground           bool
-	UsePrice               bool
-	RelayMode              int
-	OriginModelName        string
-	RequestURLPath         string
-	RequestHeaders         map[string]string
-	ShouldIncludeUsage     bool
-	DisablePing            bool // 是否禁止向下游发送自定义 Ping
-	ClientWs               *websocket.Conn
-	TargetWs               *websocket.Conn
-	InputAudioFormat       string
-	OutputAudioFormat      string
-	RealtimeTools          []dto.RealTimeTool
-	IsFirstRequest         bool
-	AudioUsage             bool
-	ReasoningEffort        string
-	UserSetting            dto.UserSetting
-	UserEmail              string
-	UserQuota              int
-	RelayFormat            types.RelayFormat
-	SendResponseCount      int
-	ReceivedResponseCount  int
-	FinalPreConsumedQuota  int // 最终预消耗的配额
+	IsStream               bool               // 是否为流式请求
+	IsGeminiBatchEmbedding bool               // 是否为 Gemini 批量嵌入请求
+	IsPlayground           bool               // 是否来自 Playground
+	UsePrice               bool               // 是否使用价格计费
+	RelayMode              int                // 中继模式
+	OriginModelName        string             // 原始模型名称
+	RequestURLPath         string             // 请求 URL 路径
+	RequestHeaders         map[string]string  // 请求头
+	ShouldIncludeUsage     bool               // 是否应包含 usage 信息
+	DisablePing            bool               // 是否禁止向下游发送自定义 Ping
+	ClientWs               *websocket.Conn    // 客户端 WebSocket 连接
+	TargetWs               *websocket.Conn    // 上游目标 WebSocket 连接
+	InputAudioFormat       string             // 输入音频格式
+	OutputAudioFormat      string             // 输出音频格式
+	RealtimeTools          []dto.RealTimeTool // 实时工具列表
+	IsFirstRequest         bool               // 是否为首次请求
+	AudioUsage             bool               // 是否统计音频用量
+	ReasoningEffort        string             // 推理强度
+	UserSetting            dto.UserSetting    // 用户设置
+	UserEmail              string             // 用户邮箱
+	UserQuota              int                // 用户配额
+	RelayFormat            types.RelayFormat  // 中继格式
+	SendResponseCount      int                // 已发送响应数量
+	ReceivedResponseCount  int                // 已接收响应数量
+	FinalPreConsumedQuota  int                // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。
-	ForcePreConsume bool
+	ForcePreConsume bool // 是否强制全额预扣
 	// Billing 是计费会话，封装了预扣费/结算/退款的统一生命周期。
 	// 免费模型时为 nil。
-	Billing BillingSettler
+	Billing BillingSettler // 计费会话
 	// BillingSource indicates whether this request is billed from wallet quota or subscription.
 	// "" or "wallet" => wallet; "subscription" => subscription
-	BillingSource string
+	BillingSource string // 计费来源
 	// SubscriptionId is the user_subscriptions.id used when BillingSource == "subscription"
-	SubscriptionId int
+	SubscriptionId int // 订阅记录 ID
 	// SubscriptionPreConsumed is the amount pre-consumed on subscription item (quota units or 1)
-	SubscriptionPreConsumed int64
+	SubscriptionPreConsumed int64 // 订阅项预消耗数量
 	// SubscriptionPostDelta is the post-consume delta applied to amount_used (quota units; can be negative).
-	SubscriptionPostDelta int64
+	SubscriptionPostDelta int64 // 订阅项后置结算增量
 	// SubscriptionPlanId / SubscriptionPlanTitle are used for logging/UI display.
-	SubscriptionPlanId    int
-	SubscriptionPlanTitle string
+	SubscriptionPlanId    int    // 订阅计划 ID
+	SubscriptionPlanTitle string // 订阅计划标题
 	// RequestId is used for idempotent pre-consume/refund
-	RequestId string
+	RequestId string // 请求唯一 ID
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
-	SubscriptionAmountTotal               int64
-	SubscriptionAmountUsedAfterPreConsume int64
-	IsClaudeBetaQuery                     bool // /v1/messages?beta=true
-	IsChannelTest                         bool // channel test request
-	RetryIndex                            int
-	LastError                             *types.NewAPIError
-	RuntimeHeadersOverride                map[string]interface{}
-	UseRuntimeHeadersOverride             bool
-	ParamOverrideAudit                    []string
+	SubscriptionAmountTotal               int64                  // 订阅总额度
+	SubscriptionAmountUsedAfterPreConsume int64                  // 预消耗后的订阅已用额度
+	IsClaudeBetaQuery                     bool                   // 是否为 Claude beta 查询（/v1/messages?beta=true）
+	IsChannelTest                         bool                   // 是否为渠道测试请求
+	RetryIndex                            int                    // 重试序号
+	LastError                             *types.NewAPIError     // 最后一次错误
+	RuntimeHeadersOverride                map[string]interface{} // 运行时请求头覆盖
+	UseRuntimeHeadersOverride             bool                   // 是否启用运行时请求头覆盖
+	ParamOverrideAudit                    []string               // 参数覆盖审计记录
 
 	// UpstreamRequestBodySize is the byte size of the marshaled upstream request
 	// body. It is set when the body is wrapped in a BodyStorage (see
 	// relay/common/outbound_body.go), so that DoApiRequest can populate
 	// http.Request.ContentLength manually (net/http only auto-detects it for
 	// *bytes.Reader/Buffer/strings.Reader). 0 means "let net/http decide".
-	UpstreamRequestBodySize int64
+	UpstreamRequestBodySize int64 // 上游请求体字节大小
 
-	PriceData types.PriceData
+	PriceData types.PriceData // 价格数据
 
 	// TieredBillingSnapshot is a frozen snapshot of tiered billing rules
 	// captured at pre-consume time. Non-nil only when billing mode is "tiered_expr".
-	TieredBillingSnapshot *billingexpr.BillingSnapshot
-	BillingRequestInput   *billingexpr.RequestInput
+	TieredBillingSnapshot *billingexpr.BillingSnapshot // 阶梯计费快照
+	BillingRequestInput   *billingexpr.RequestInput    // 计费请求输入
 
-	Request dto.Request
+	Request dto.Request // 标准化请求对象
 
 	// RequestConversionChain records request format conversions in order, e.g.
 	// ["openai", "openai_responses"] or ["openai", "claude"].
-	RequestConversionChain []types.RelayFormat
+	RequestConversionChain []types.RelayFormat // 请求格式转换链
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
-	FinalRequestRelayFormat types.RelayFormat
+	FinalRequestRelayFormat types.RelayFormat // 最终请求到上游的格式
 
-	StreamStatus *StreamStatus
+	StreamStatus *StreamStatus // 流状态信息
 
-	ThinkingContentInfo
-	TokenCountMeta
-	*ClaudeConvertInfo
-	*RerankerInfo
-	*ResponsesUsageInfo
-	*ChannelMeta
-	*TaskRelayInfo
+	ThinkingContentInfo // 思考内容相关信息
+	TokenCountMeta      // Token 计数元信息
+	*ClaudeConvertInfo  // Claude 转换相关信息
+	*RerankerInfo       // 重排器相关信息
+	*ResponsesUsageInfo // Responses 接口用量信息
+	*ChannelMeta        // 渠道元信息
+	*TaskRelayInfo      // 任务中继相关信息
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
