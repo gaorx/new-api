@@ -33,6 +33,30 @@
 
 Token 不是“渠道 key”，而是“平台颁发给下游调用者的 key”。
 
+这里还有一个非常容易混淆的点：
+
+- `Token` 不是计量单位
+- `Token.RemainQuota` 也不是“剩余可用 tokens 数”
+- `Token` 记录的是这个调用凭证还能消费多少**平台内部额度**
+
+也就是说，平台真正扣的不是“请求里的原始 token 数”，而是换算后的 `quota`。
+
+因此更准确的理解是：
+
+```text
+请求使用量（prompt/completion/audio/image/...）
+  -> 按模型和分组定价规则换算成 quota
+  -> 再检查并扣减 Token.RemainQuota / User.Quota
+```
+
+所以 `Token` 更像：
+
+- 权限边界
+- 路由约束载体
+- 一份独立的额度预算/上限
+
+而不是“原始 token 余额”。
+
 ## Group
 
 `Group` 是平台内部非常核心的抽象，它不是用户组这么简单，而是同时参与：
@@ -69,6 +93,57 @@ Channel 保存了上游访问所需的关键材料：
 - `ChannelInfo`（多 key 模式等）
 
 Channel 是“如何连到上游”的实体。
+
+## Model Deployment
+
+这个项目里说的“模型部署”不是把 `new-api` 服务本身部署到服务器上，而是**为模型服务创建一个外部运行实例**。
+
+当前实现里，这个能力主要对接 `io.net`：
+
+- 后端通过 `/api/deployments/*` 提供部署管理接口
+- 系统配置项使用 `model_deployment.ionet.enabled` 和 `model_deployment.ionet.api_key`
+- 底层由 `pkg/ionet` 封装 `io.net` 的硬件、区域、价格预估、部署、续期、日志、容器详情等 API
+
+它本质上是在做：
+
+```text
+选择硬件/地区/副本/时长
+  -> 在 io.net 上创建容器部署
+  -> 拿到部署下容器的 public_url
+  -> 再把这个地址接回 new-api 作为可调用上游
+```
+
+从代码语义上看，这更接近：
+
+- “托管一个模型服务实例”
+- “为某个模型 runtime 申请 GPU 容器资源”
+- “把该实例纳入平台渠道体系”
+
+而不是传统意义上的应用发布/站点部署。
+
+## Model Deployment 和 Channel 的关系
+
+模型部署不是 `Channel` 的替代物，而是 `Channel` 的一个来源。
+
+当前默认链路是：
+
+1. 管理员在控制台创建 `io.net` 部署
+2. 部署默认镜像可使用 `ollama/ollama:latest`
+3. 容器启动后返回 `public_url`
+4. 前端可一键把该部署“同步到渠道”
+5. 系统自动创建一个 `type = 4` 的 Ollama 渠道，`base_url` 指向部署实例地址
+
+所以更准确地说：
+
+```text
+Model Deployment
+  -> 产出一个可访问的模型服务实例
+  -> 再被映射为 Channel
+  -> 再展开为 Ability
+  -> 最终参与正常的分组、选路和计费流程
+```
+
+这也解释了为什么“模型部署”虽然看起来像独立模块，最终仍然会回到系统最核心的 `Channel / Ability / Relay` 主链路里。
 
 ## Ability
 
@@ -123,6 +198,14 @@ Ability = Channel 在某 Group 下支持某 Model 的能力记录
 - `relay/common/BillingSettler`
 - `service/BillingSession`
 - `billingexpr` 表达式系统
+
+这里顺带要强调：
+
+- `quota` 是平台内部统一计费单位
+- `token` 是调用凭证
+- 两者不是 1:1 对应关系
+
+不同模型、不同分组、不同 usage 结构，都会导致相同的原始 token 数最终换算出不同的 quota。
 
 ## 概念关系图
 
