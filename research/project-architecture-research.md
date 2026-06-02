@@ -21,6 +21,8 @@
 11. [11 - 异步任务与后台作业](/Users/gaorx/Works/my/new-api/research/project-architecture-11-async-tasks-and-background-jobs.md)
 12. [12 - 中间件职责与请求链路](/Users/gaorx/Works/my/new-api/research/project-architecture-12-middleware-and-request-flow.md)
 13. [13 - 模型元数据、价格来源与请求时序](/Users/gaorx/Works/my/new-api/research/project-architecture-13-model-metadata-pricing-and-request-sequence.md)
+14. [14 - 模型列表与价格接口](/Users/gaorx/Works/my/new-api/research/project-architecture-14-model-list-and-pricing-interfaces.md)
+15. [15 - 支付系统与支付方式专题](/Users/gaorx/Works/my/new-api/research/project-architecture-15-payment-system.md)
 
 ## 文档分工
 
@@ -42,6 +44,7 @@
 | `12-middleware-and-request-flow` | 路由与中间件上下文注入 | 请求在进 controller 前发生了什么 |
 | `13-model-metadata-pricing-and-request-sequence` | 模型元数据、价格来源、一次请求的元数据决策链 | `model/vendor/channel/pricing` 怎么联系 |
 | `14-model-list-and-pricing-interfaces` | `/v1/models`、`/api/pricing` 及相关接口 | 模型列表和价格接口怎么组织 |
+| `15-payment-system` | 支付网关、支付方式、充值/订阅订单完成链路 | 这个项目到底支持哪些支付，钱怎么变成 quota 或订阅 |
 | `relay.md` | Relay 协议互转专题 | 是不是统一转 OpenAI，哪些地方直通 |
 | `chat-completions-relay-flow.md` | `/v1/chat/completions` 专项链路 | 这个接口的特殊分支怎么走 |
 | `options.md` | `options` 表配置键专题 | 某个 option key 是干什么的 |
