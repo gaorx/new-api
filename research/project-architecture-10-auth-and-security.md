@@ -58,6 +58,190 @@ Session / AccessToken
 
 拆成了两类身份系统。
 
+### Relay Token 校验与缓存链路
+
+这里还有一个很容易误解的点：
+
+- `/v1/*` 请求进来后，项目确实会校验 `sk-xxx`
+- 但不是“每次都直接查数据库”
+
+实际链路是：
+
+```text
+TokenAuth()
+  -> 从 Authorization / 兼容 header 中提取 sk-xxx
+  -> 去掉 sk- 前缀
+  -> ValidateUserToken(key)
+  -> GetTokenByKey(key, false)
+  -> 优先查 Redis
+  -> Redis miss 或 Redis 异常时回源数据库
+  -> DB 命中后异步回填 Redis
+```
+
+也就是说，这里的设计是：
+
+- token 鉴权：`Redis 优先，DB 兜底`
+- user 基础信息读取：也是 `Redis 优先，DB 兜底`
+- 当前没有看到专门给 token 做“全量进程内内存缓存”的实现
+
+所以当 Redis 正常启用时，大多数 `/v1/chat/completions` 请求不会每次都打数据库查 token。
+
+### TokenAuth 时序图
+
+下面这张图把 `TokenAuth -> token cache -> user cache -> context` 的实际顺序串起来了：
+
+```mermaid
+sequenceDiagram
+    participant Client as Client
+    participant Auth as TokenAuth
+    participant TokenSvc as ValidateUserToken/GetTokenByKey
+    participant Redis as Redis
+    participant DB as Database
+    participant UserSvc as GetUserCache
+    participant Ctx as Gin Context
+
+    Client->>Auth: Authorization: Bearer sk-xxx
+    Auth->>Auth: 提取 key，去掉 sk- 前缀
+    Auth->>TokenSvc: ValidateUserToken(key)
+
+    TokenSvc->>Redis: HGETALL token:{hmac(sk)}
+    alt token cache hit
+        Redis-->>TokenSvc: Token hash
+        TokenSvc->>TokenSvc: 回填 token.Key = 原始 key
+    else token cache miss / Redis 异常
+        Redis-->>TokenSvc: miss / error
+        TokenSvc->>DB: SELECT * FROM tokens WHERE key = ?
+        DB-->>TokenSvc: token record
+        TokenSvc->>Redis: 异步回填 token:{hmac(sk)}
+        TokenSvc->>TokenSvc: 写缓存前清空 token.Key
+    end
+
+    TokenSvc->>TokenSvc: 校验 status / expired_time / remain_quota
+    TokenSvc-->>Auth: token + 校验结果
+
+    Auth->>Auth: 校验 AllowIps
+    Auth->>UserSvc: GetUserCache(token.UserId)
+
+    UserSvc->>Redis: HGETALL user:{userId}
+    alt user cache hit
+        Redis-->>UserSvc: user hash
+    else user cache miss / Redis 异常
+        Redis-->>UserSvc: miss / error
+        UserSvc->>DB: SELECT * FROM users WHERE id = ?
+        DB-->>UserSvc: user record
+        UserSvc->>Redis: 异步回填 user:{userId}
+    end
+
+    UserSvc-->>Auth: UserBase
+    Auth->>Auth: 校验用户状态 / 分组 / 模型权限
+    Auth->>Ctx: 写入 user_id / token_id / group / quota / channel 分发基础上下文
+    Auth-->>Client: 放行到后续中间件和 Relay
+```
+
+这张图对应的重点是：
+
+- token 校验和 user 基础信息读取都优先走 Redis
+- 两层缓存 miss 时才回源 DB
+- token cache 和 user cache 都是在 DB 成功读取后异步回填
+- `TokenAuth()` 的目标不只是“判断 token 存不存在”，而是把后续 relay 所需的大部分身份上下文提前准备好
+
+### `token:{hmac(sk)}` 在 Redis 中保存什么
+
+token 缓存不是把整条记录序列化成一个 JSON string，而是存成一个 Redis Hash：
+
+```text
+key: token:{hmac(sk)}
+type: hash
+```
+
+其中：
+
+- Redis key 不是明文 `sk-xxx`
+- 代码会先对 token 做 HMAC，再作为 Redis key 的一部分
+
+同时写缓存前还会主动执行一次 `token.Clean()`，把结构体里的 `Key` 清空后再写入 Redis。
+
+这意味着：
+
+- Redis 不保存明文 token
+- Redis key 是 `hmac(sk)`
+- Redis value 里 `Key` 字段也是空字符串
+
+### Hash 中的字段
+
+这个 hash 保存的是 `model.Token` 结构体的大部分字段，字段名直接使用 Go struct 字段名，值按字符串形式写入。
+
+通常会包含：
+
+- `Id`
+- `UserId`
+- `Key`
+- `Status`
+- `Name`
+- `CreatedTime`
+- `AccessedTime`
+- `ExpiredTime`
+- `RemainQuota`
+- `UnlimitedQuota`
+- `ModelLimitsEnabled`
+- `ModelLimits`
+- `AllowIps`
+- `UsedQuota`
+- `Group`
+- `CrossGroupRetry`
+
+其中有两个细节需要单独强调：
+
+1. `Key`
+
+- 这个字段会被主动清空后再写入 Redis
+- 所以 Redis 里的 `Key` 不是明文 `sk-xxx`
+- 读取缓存后，程序会把本次请求里传入的原始 key 再补回 `token.Key`
+
+2. `DeletedAt`
+
+- `DeletedAt` 不会写入 Redis
+- `RedisHSetObj()` 明确跳过了 `gorm.DeletedAt`
+
+因此逻辑上可以把 Redis 中的 token cache 理解成：
+
+```text
+HGETALL token:{hmac(sk)}
+Id=123
+UserId=45
+Key=
+Status=1
+Name=my-token
+CreatedTime=1710000000
+AccessedTime=1710001234
+ExpiredTime=-1
+RemainQuota=998877
+UnlimitedQuota=false
+ModelLimitsEnabled=true
+ModelLimits=gpt-4o,gpt-4.1
+AllowIps=1.2.3.4/32
+UsedQuota=112233
+Group=default
+CrossGroupRetry=false
+```
+
+### 为什么这些字段要缓存下来
+
+这些字段基本覆盖了 token 鉴权阶段所需的核心信息：
+
+- `Status`、`ExpiredTime`、`RemainQuota`、`UnlimitedQuota`
+  用于判断 token 是否可用
+- `AllowIps`
+  用于 IP 白名单校验
+- `Group`、`CrossGroupRetry`
+  用于分组和后续渠道重试行为
+- `ModelLimitsEnabled`、`ModelLimits`
+  用于模型访问限制
+- `UserId`
+  用于继续加载用户信息、额度和上下文
+
+换句话说，Redis 里的这份 token hash 本质上就是“支撑 `TokenAuth()` 快速完成鉴权的一份缓存快照”。
+
 ### 3. 混合身份与只读令牌
 
 项目里还有两种折中形态：
@@ -66,6 +250,117 @@ Session / AccessToken
 - `TokenAuthReadOnly()`：只做宽松令牌存在性校验，允许查询只读资源
 
 这对“控制台内嵌 playground / 查询接口 / 兼容旧接口”很重要。
+
+## Relay 输入安全：敏感词检查
+
+除了用户身份、令牌身份和二次验证，这个项目还在 relay 入口前做了一层输入内容拦截。
+
+实现位置主要是：
+
+- `controller/relay.go`
+- `service/sensitive.go`
+- `service/str.go`
+- `setting/sensitive.go`
+- `model/option.go`
+
+### 检查发生在什么时候
+
+在 `controller/relay.go` 中，请求体完成解析、校验并生成 `RelayInfo` 之后，系统会先判断当前是否需要做 prompt 敏感词检查：
+
+- `setting.ShouldCheckPromptSensitive()`
+- 如果启用，则从请求中构造 `meta.CombineText`
+- 然后调用 `service.CheckSensitiveText(meta.CombineText)`
+
+如果命中敏感词，请求会在真正访问上游模型之前被中止，并返回 `sensitive_words_detected`。
+
+也就是说，这里的定位不是“模型返回后再审查”，而是“发送到上游前的前置拦截”。
+
+### 检查是怎么做的
+
+敏感词匹配不是逐条正则扫描，而是基于 AC 自动机（Aho-Corasick）：
+
+- `service.SensitiveWordContains()` 会先把待检测文本转成小写
+- `service.AcSearch()` 会把词表也规范化为小写
+- `service.getOrBuildAC()` 会按词表内容生成缓存 key，并缓存已构建的自动机
+- `MultiPatternSearch(..., true)` 允许在命中后提前返回
+
+这意味着它具备几个明显特征：
+
+- 大小写不敏感
+- 适合多关键词匹配
+- 词表不变时不会为每个请求都重新构建匹配器
+
+当前主要检查文本内容。`service.CheckSensitiveMessages()` 中对 `image_url` 仍是 `TODO`，说明图像地址本身暂未纳入这套敏感词检测。
+
+### 词表从哪里来
+
+词表来自系统配置项 `SensitiveWords`，而不是单独的本地词库文件。
+
+默认值定义在 `setting/sensitive.go`：
+
+```go
+var SensitiveWords = []string{
+    "test_sensitive",
+}
+```
+
+但这只是启动时的默认内存值。项目初始化选项时，会把它写入 `OptionMap`，随后再从数据库 `options` 表加载覆盖：
+
+- `model.InitOptionMap()` 会注册 `SensitiveWords`
+- `loadOptionsFromDatabase()` 会读取数据库中的 option 记录
+- `updateOptionMap()` 在处理 `SensitiveWords` 时调用 `setting.SensitiveWordsFromString(value)`
+
+因此在真实部署中，实际生效的词表通常来自数据库中的 `options.key = "SensitiveWords"` 这一项。
+
+### 配置格式
+
+`SensitiveWords` 的值不是 JSON 数组，而是“多行字符串，每行一个关键词”。
+
+`setting.SensitiveWordsFromString()` 的处理规则是：
+
+- 按换行拆分
+- 对每一行做 `TrimSpace`
+- 忽略空行
+
+所以一个典型值可以写成：
+
+```text
+spam
+gambling
+fake_id
+test_sensitive
+成人内容
+暴力
+政治敏感词
+```
+
+如果从接口或数据库角度看，它保存成一条普通字符串记录，例如：
+
+```json
+{
+  "key": "SensitiveWords",
+  "value": "spam\ngambling\nfake_id\ntest_sensitive\n成人内容\n暴力\n政治敏感词"
+}
+```
+
+### 在哪里配置
+
+新版前端已经提供了系统设置页面，位置在：
+
+`System Settings -> Security -> Sensitive Words`
+
+对应前端代码：
+
+- `web/default/src/features/system-settings/security/section-registry.tsx`
+- `web/default/src/features/system-settings/request-limits/sensitive-words-section.tsx`
+
+这个面板目前暴露了三项：
+
+- `CheckSensitiveEnabled`：总开关
+- `CheckSensitiveOnPromptEnabled`：是否检查用户 prompt
+- `SensitiveWords`：多行词表
+
+保存后会通过通用 option 更新接口写回后端，再同步到内存配置和数据库 `options` 表。
 
 ## 认证相关表的主次关系
 

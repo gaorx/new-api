@@ -54,6 +54,102 @@ RelayInfo = 请求上下文 + 渠道上下文 + 计费上下文 + 协议上下�
 
 它避免了把每个上游写成“独立 controller”，而是统一挂在一个网关框架之下。
 
+## `service`、`relay`、`relay/channel` 的链路关系
+
+这三个目录从职责上看，最容易理解成下面这条主链：
+
+```text
+controller
+  -> service
+  -> relay
+  -> relay/channel/<provider>
+```
+
+如果只看同步主请求链路，这个理解基本成立：
+
+1. `controller/relay.go` 负责总入口，做请求解析、重试控制和错误收口。
+2. `service/` 负责前置业务能力，例如敏感词检查、token 估算、预扣费、渠道选择、结算。
+3. `relay/` 负责真正的转发编排，按 `relay format` 和 `relay mode` 分发到不同 helper。
+4. `relay/channel/*` 负责具体上游适配，实现 URL 构造、header、请求转换、发请求、响应解析。
+
+对应到关键代码位置：
+
+- `controller/relay.go`
+- `relay/relay_adaptor.go`
+- `relay/channel/adapter.go`
+
+### 1. 职责分层
+
+可以把三者的角色简单记成：
+
+- `service`：业务规则层
+- `relay`：转发编排层
+- `relay/channel`：上游适配层
+
+其中 `relay.GetAdaptor()` 会把 `apiType` 映射成具体 adaptor，例如 OpenAI、Claude、Gemini、Ollama 等实现。
+
+### 2. 真实代码依赖并不是严格单向
+
+虽然职责上很像：
+
+```text
+service -> relay -> relay/channel
+```
+
+但实际代码并不是严格的单向分层。
+
+更接近真实情况的是：
+
+```text
+controller -> service + relay
+relay -> service + relay/channel
+relay/channel -> service
+service -> relay/common + relay/constant
+```
+
+原因主要有三类：
+
+1. `relay` 会调用 `service` 做错误处理、usage 结算、quota 后处理。
+2. `relay/channel/*` 会调用 `service` 做协议转换或通用工具复用，例如 `ClaudeToOpenAIRequest`、`GeminiToOpenAIRequest`。
+3. `service` 虽然不直接依赖 `relay` 的主 handler，但会依赖 `relay/common`、`relay/constant`，少数地方还会依赖具体 `relay/channel` 子包的结构或类型。
+
+例如：
+
+- `relay/responses_handler.go` 会调用 `service.RelayErrorHandler(...)`、`service.PostTextConsumeQuota(...)`
+- `relay/channel/openai/adaptor.go` 会调用 `service.ClaudeToOpenAIRequest(...)`
+- `service/convert.go` 会直接 import `relay/common` 和 `relay/channel/openrouter`
+
+所以这里更适合把它理解成：
+
+- 主执行方向是 `controller -> service -> relay -> relay/channel`
+- 但 import 关系上，`service` 和 `relay` 之间不是完全隔离的
+
+### 3. 一个专门的断环设计：任务轮询
+
+异步任务轮询是这个项目里一个很典型的“有意打断循环依赖”的例子。
+
+`service/task_polling.go` 没有直接 import `relay` 获取任务 adaptor，而是：
+
+1. 在 `service` 中定义最小接口 `TaskPollingAdaptor`
+2. 声明 `GetTaskAdaptorFunc`
+3. 在 `main.go` 中把 `service.GetTaskAdaptorFunc` 注入为 `relay.GetTaskAdaptor`
+
+这相当于把原本可能形成的：
+
+```text
+service -> relay -> relay/channel -> service
+```
+
+改写成：
+
+```text
+service -> 抽象接口
+main -> 注入 relay.GetTaskAdaptor
+relay -> relay/channel
+```
+
+这说明项目作者已经意识到 `service` 和 `relay` 之间存在天然耦合点，并在任务轮询这条链路上显式做了断环处理。
+
 ## Relay 的请求生命周期
 
 以 `/v1/chat/completions` 为例，主流程大概是：

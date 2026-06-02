@@ -4,6 +4,17 @@
 
 `new-api` 不是把请求固定转发给某一个上游，而是要在“用户、令牌、分组、模型、渠道能力、优先级、亲和性、重试策略”之间做决策。
 
+如果你当前主要想搞清楚：
+
+- `/v1/models` 为什么主要从 `abilities` 取模型
+- 模型价格目录为什么又是另一条聚合链路
+- `models` 元数据表在这里到底扮演什么角色
+
+可以同时参考：
+
+- `research/project-architecture-13-model-metadata-pricing-and-request-sequence.md`
+- `research/project-architecture-14-model-list-and-pricing-interfaces.md`
+
 ## 基础分发
 
 `middleware/Distribute()` 会从请求中提取模型名，并结合：

@@ -18,6 +18,14 @@
 
 这一节专门把这些问题串起来。
 
+如果你更关心的是接口边界本身，而不是整条模型请求时序，可以继续看：
+
+- `research/project-architecture-14-model-list-and-pricing-interfaces.md`
+
+如果你更关心的是运行时 `group + model -> channel` 的选路行为，可以同时看：
+
+- `research/project-architecture-05-channel-routing.md`
+
 ## `vendor` 是什么
 
 这里的 `vendor` 不是 Go 依赖目录里的 `vendor/`，而是“模型供应商 / 厂商 / 作者”元数据。
