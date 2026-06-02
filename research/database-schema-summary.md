@@ -706,56 +706,173 @@
 
 | 字段名 | 用途 |
 |---|---|
-| `id` | 主键 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
-| `task_id` | 上游第三方任务 ID |
-| `platform` | 任务平台类型 |
-| `user_id` | 用户 ID |
-| `group` | 分组，主要用于计费修正 |
-| `channel_id` | 渠道 ID |
-| `quota` | 该任务对应的额度 |
-| `action` | 任务动作类型 |
-| `status` | 任务状态 |
-| `fail_reason` | 失败原因 |
-| `submit_time` | 提交时间 |
-| `start_time` | 开始时间 |
-| `finish_time` | 完成时间 |
-| `progress` | 进度 |
-| `properties` | 任务基础属性 JSON |
-| `private_data` | 内部私有 JSON，可能包含计费/上游信息 |
-| `data` | 任务结果或原始响应 JSON |
+| `id` | 数据库主键，主要给内部更新、批量修复和 CAS 状态推进使用 |
+| `created_at` | 记录创建时间，属于通用审计字段 |
+| `updated_at` | 记录最近更新时间，属于通用审计字段 |
+| `task_id` | 对外公开的任务 ID，不等于上游真实任务 ID；给用户查询、任务列表和统一 API 返回使用 |
+| `platform` | 任务平台类型，用于轮询器按平台分发到对应 `TaskAdaptor` |
+| `user_id` | 任务归属用户 ID，用于权限校验、用户任务列表和账单关联 |
+| `group` | 提交时所在分组，主要用于异步计费重算，避免用户后续改组导致账单漂移 |
+| `channel_id` | 实际使用的渠道 ID，用于轮询、结果代理、原任务续作和审计 |
+| `quota` | 该任务最终或当前记录的额度，用于异步结算、差额补扣和退款 |
+| `action` | 任务动作类型，如文生视频、图生视频、remix 等；轮询和续作时会继续使用 |
+| `status` | 当前任务状态，是查询接口、轮询推进、结算和代理校验的核心字段 |
+| `fail_reason` | 任务失败原因，供用户展示、日志记录和退款原因说明使用 |
+| `submit_time` | 提交时间，用于列表筛选、审计和超时判断 |
+| `start_time` | 任务真正开始执行的时间，通常在轮询到进行中时写入 |
+| `finish_time` | 任务结束时间，通常在轮询到成功或失败时写入 |
+| `progress` | 任务进度展示字段，也用于筛选未完成任务 |
+| `properties` | 任务基础属性 JSON，保存模型名、输入摘要等较稳定的业务上下文 |
+| `private_data` | 内部私有 JSON，保存上游真实任务 ID、结果地址、计费来源和计费快照等敏感上下文 |
+| `data` | 任务原始响应或脱敏后的响应 JSON，供详情返回、格式转换和兼容逻辑使用 |
+
+### 这张表为什么不能只做纯转发
+
+`tasks` 不是“顺手存一下上游返回值”的缓存表，而是异步任务子系统的主记录表。它至少承担下面几类职责：
+
+- 给用户和管理员提供本地任务列表与任务详情
+- 让后台轮询器在原请求结束后还能继续推进任务状态
+- 记录对外 `task_id` 与上游真实任务 ID 之间的映射
+- 保存结果代理所需的渠道、结果 URL 和访问上下文
+- 保存异步退款、补扣、订阅结算所需的计费快照
+- 为 remix / continuation 这类基于历史任务的继续操作提供上下文
+
+因此它不是“可有可无的落库”，而是任务机制本身的一部分。
+
+### 从读取场景看这张表
+
+#### 1. 查询接口
+
+主要读取：
+
+- `task_id`
+- `status`
+- `progress`
+- `fail_reason`
+- `submit_time`
+- `finish_time`
+- `data`
+- `private_data.result_url`
+
+#### 2. 后台轮询
+
+主要读取：
+
+- `platform`
+- `channel_id`
+- `action`
+- `private_data.upstream_task_id`
+- `private_data.key`
+
+轮询后主要更新：
+
+- `status`
+- `progress`
+- `start_time`
+- `finish_time`
+- `fail_reason`
+- `data`
+- `private_data.result_url`
+
+#### 3. 结果代理
+
+主要读取：
+
+- `user_id`
+- `status`
+- `channel_id`
+- `private_data.upstream_task_id`
+- `private_data.result_url`
+- `private_data.key`
+
+#### 4. 异步计费
+
+主要读取：
+
+- `quota`
+- `group`
+- `private_data.billing_source`
+- `private_data.subscription_id`
+- `private_data.token_id`
+- `private_data.billing_context`
 
 ### `properties` JSON 内部结构
 
 | 键名 | 用途 |
 |---|---|
-| `input` | 用户输入内容 |
-| `upstream_model_name` | 实际上游模型名 |
-| `origin_model_name` | 平台原始模型名 |
+| `input` | 用户输入摘要，偏展示和审计用途 |
+| `upstream_model_name` | 实际发送到上游的模型名，用于任务详情展示和兼容回填 |
+| `origin_model_name` | 平台侧原始模型名，尤其用于 remix / continuation 恢复原上下文 |
 
 ### `private_data` JSON 内部结构
 
 | 键名 | 用途 |
 |---|---|
-| `key` | 可能保存上游密钥等内部信息 |
-| `upstream_task_id` | 上游真实任务 ID |
-| `result_url` | 任务结果 URL |
-| `billing_source` | 计费来源，如 wallet/subscription |
-| `subscription_id` | 订阅 ID |
-| `token_id` | 平台令牌 ID |
-| `billing_context` | 计费上下文快照 |
+| `key` | 某些平台需要保存提交时使用的上游密钥，供后续轮询或结果代理继续使用 |
+| `upstream_task_id` | 上游真实任务 ID；本地公开 `task_id` 与之解耦，避免直接暴露 provider 侧 ID |
+| `result_url` | 任务成功后的最终结果 URL；视频代理和任务详情都会读取 |
+| `billing_source` | 计费来源，如 `wallet` 或 `subscription`，用于异步退款和结算 |
+| `subscription_id` | 订阅实例 ID，用于任务完成后回写订阅额度 |
+| `token_id` | 平台令牌 ID，用于令牌维度日志和退款关联 |
+| `billing_context` | 计费上下文快照，用于任务完成后的重算、补扣或退款 |
 
 ### `billing_context` JSON 内部结构
 
 | 键名 | 用途 |
 |---|---|
-| `model_price` | 模型单价 |
-| `group_ratio` | 分组倍率 |
-| `model_ratio` | 模型倍率 |
-| `other_ratios` | 附加倍率，如时长、分辨率 |
-| `origin_model_name` | 模型名 |
-| `per_call_billing` | 是否按次计费 |
+| `model_price` | 模型基础单价快照 |
+| `group_ratio` | 提交时的分组倍率快照 |
+| `model_ratio` | 提交时的模型倍率快照 |
+| `other_ratios` | 附加倍率，如时长、分辨率、尺寸等 |
+| `origin_model_name` | 用于重算时恢复原模型语义的模型名 |
+| `per_call_billing` | 是否按次计费；若为真，轮询完成阶段通常不再按 token 做差额重算 |
+
+### 按运行时职责划分字段
+
+#### 1. 用户可见与查询展示
+
+- `task_id`
+- `status`
+- `progress`
+- `fail_reason`
+- `submit_time`
+- `start_time`
+- `finish_time`
+- `data`
+
+#### 2. 轮询与上游交互
+
+- `platform`
+- `channel_id`
+- `action`
+- `private_data.upstream_task_id`
+- `private_data.key`
+
+#### 3. 结果访问与代理
+
+- `private_data.result_url`
+- `private_data.upstream_task_id`
+- `channel_id`
+
+#### 4. 异步计费与退款
+
+- `quota`
+- `group`
+- `private_data.billing_source`
+- `private_data.subscription_id`
+- `private_data.token_id`
+- `private_data.billing_context`
+
+### 生命周期时序表
+
+| 阶段 | 主要写入/更新字段 | 主要读取方 |
+|---|---|---|
+| 任务提交成功后插入记录 | `task_id`、`user_id`、`group`、`channel_id`、`platform`、`quota`、`action`、`status=NOT_START`、`progress=0%`、`data` | 后续全部流程 |
+| 绑定上游任务与计费上下文 | `private_data.upstream_task_id`、`private_data.billing_source`、`private_data.subscription_id`、`private_data.token_id`、`private_data.billing_context` | 轮询、计费、代理、remix |
+| 轮询进行中 | `status`、`progress`、`start_time`、`data` | 查询接口、后续轮询 |
+| 轮询成功 | `status=SUCCESS`、`progress=100%`、`finish_time`、`private_data.result_url` | 视频代理、详情展示、结算 |
+| 轮询失败 | `status=FAILURE`、`progress=100%`、`finish_time`、`fail_reason` | 用户提示、退款逻辑 |
+| 异步结算 | 可能更新 `quota` | 账单、日志 |
 
 说明：`username` 字段带 `gorm:"-"`，不落库。
 
