@@ -58,6 +58,65 @@
 
 ---
 
+## 主表与次要表划分
+
+这里的“主表 / 次要表”不是按业务价值高低来分，而是按**逻辑关系中的主从地位**来分：
+
+- 主表：可以独立表达一个核心业务对象，或者本身就是一条核心业务主链路的事实记录；其他表通常围绕它扩展、引用、聚合或审计。
+- 次要表：依附某张主表存在，主要承担扩展资料、映射索引、统计聚合、审计日志、流程辅助等职责。
+
+补充说明：
+
+- 次要表不代表“不重要”。像 `logs`、`abilities`、`subscription_pre_consume_records` 虽然是次要表，但对排障、路由和计费都很关键。
+- 本项目大多是应用层维护逻辑关系，不是靠数据库硬外键来体现主从，因此这里的划分更偏“领域模型”而不是“DDL 外键树”。
+
+### 主要表
+
+| 表名 | 为什么算主表 |
+|---|---|
+| `users` | 平台账户根实体，认证、额度、邀请、订阅、OAuth 绑定等能力都围绕它展开 |
+| `tokens` | Relay 数据面的核心凭证对象，虽然归属 `users`，但本身有完整生命周期，并被日志、任务、计费逻辑反复引用 |
+| `channels` | 上游渠道根实体，路由、可用能力、测试、余额、封禁等机制都以它为中心 |
+| `models` | 平台模型主数据，决定前台展示、模型选择、供应商归属等核心元信息 |
+| `vendors` | 供应商主数据，`models` 通过 `vendor_id` 归属到它 |
+| `options` | 全局动态配置中心，虽然不是业务单据，但它是系统运行时配置的根表 |
+| `redemptions` | 兑换码业务实体，有自己的生成、使用、失效生命周期 |
+| `top_ups` | 充值订单主记录，是支付与额度变更链路中的核心事实表 |
+| `subscription_plans` | 订阅商品/套餐定义，是订阅体系的模板根表 |
+| `subscription_orders` | 订阅购买交易主记录，连接用户、套餐与支付状态 |
+| `user_subscriptions` | 用户订阅实例主记录，订阅生效、续期、额度重置等逻辑都围绕它 |
+| `tasks` | 异步任务主记录，承担任务状态机、计费上下文和结果追踪 |
+| `custom_oauth_providers` | 自定义 OAuth/OIDC 提供商根配置，绑定关系和登录流程都依赖它 |
+
+### 次要表
+
+| 表名 | 依附关系 / 次要原因 |
+|---|---|
+| `passkey_credentials` | 依附 `users`，只是登录方式扩展，不是独立业务根实体 |
+| `two_fas` | 依附 `users`，保存 2FA 主配置 |
+| `two_fa_backup_codes` | 依附 `users` / `two_fas`，只是 2FA 辅助材料 |
+| `user_oauth_bindings` | 连接 `users` 与 `custom_oauth_providers` 的绑定表，典型关系表 |
+| `abilities` | 从 `channels.group + channels.models` 展开的路由索引表，属于派生表 |
+| `setups` | 初始化状态记录，偏系统流程辅助，不承载核心业务对象 |
+| `checkins` | 依附 `users` 的运营记录表，主要服务签到功能 |
+| `prefill_groups` | 前端预填分组配置，偏 UI/运营辅助数据 |
+| `logs` | 审计/消费日志表，记录业务事实但不是业务对象的主数据来源 |
+| `quota_data` | 聚合统计表，数据来源于实际消费行为，不是源事实根表 |
+| `midjourneys` | 面向特定能力的专用任务记录，更像 `tasks` 旁支功能表 |
+| `perf_metrics` | 性能指标聚合表，属于观测与统计层 |
+| `subscription_pre_consume_records` | 依附 `user_subscriptions` 的预扣/结算辅助记录，不单独构成订阅主链路 |
+
+### 一句话理解
+
+如果从“谁是业务主干，谁是挂在主干上的扩展与派生”来看，可以把这套表大致理解成：
+
+- 账户主干：`users` -> `tokens`，再挂出 `passkey_credentials`、`two_fas`、`two_fa_backup_codes`、`user_oauth_bindings`、`checkins`
+- 路由主干：`channels` + `models` + `vendors`，再派生出 `abilities`、`perf_metrics`
+- 计费主干：`redemptions`、`top_ups`、`subscription_plans`、`subscription_orders`、`user_subscriptions`，再挂出 `subscription_pre_consume_records`
+- 运行事实主干：`tasks`，以及面向审计和统计的 `logs`、`quota_data`、`midjourneys`
+
+---
+
 ## 表总览
 
 ### 账户、认证与授权

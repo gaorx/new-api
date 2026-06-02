@@ -67,6 +67,18 @@ Session / AccessToken
 
 这对“控制台内嵌 playground / 查询接口 / 兼容旧接口”很重要。
 
+## 认证相关表的主次关系
+
+如果只看认证与安全子系统，对应的数据主从关系可以概括成：
+
+- 主表：`users`
+- 次要表：`tokens`、`passkey_credentials`、`two_fas`、`two_fa_backup_codes`、`user_oauth_bindings`
+- 独立配置主表：`custom_oauth_providers`
+
+这里把 `users` 视为认证域的根实体，因为登录态、角色、状态、额度、第三方身份归属最终都收敛到用户。其余几张表都更像围绕用户展开的凭证、绑定或二次验证扩展。
+
+其中 `tokens` 虽然在全库视角可以算一张核心业务表，但在“认证安全”这个专题里，它依然是依附 `users.user_id` 存在的次级身份载体；而 `custom_oauth_providers` 则是另一条独立的配置根，用来承载可扩展的外部身份接入能力。
+
 ## 权限层级
 
 从路由组织看，权限大致分成三层：
@@ -79,6 +91,94 @@ Session / AccessToken
    系统选项、性能操作、自定义 OAuth Provider、敏感配置、渠道密钥查看等高危能力。
 
 这不是“一个 admin 包打天下”的设计，而是比较明确地区分了运营权限和系统权限。
+
+## 用户 Token 与管理员充值权限边界
+
+这一块很容易在产品理解上混淆，因为“API Token 管理”和“用户额度管理”在系统里是两套不同能力。
+
+### 1. 用户 Token 只能按归属人自主管理
+
+`/api/token/*` 这组接口虽然只挂在 `UserAuth()` 下，但控制器实现里每次都会把“当前登录用户 ID”带入查询条件：
+
+- `GetAllTokens`
+- `SearchTokens`
+- `GetToken`
+- `GetTokenKey`
+- `UpdateToken`
+- `DeleteToken`
+- `GetTokenKeysBatch`
+
+这些接口最终都会落到类似 `model.GetTokenByIds(id, userId)`、`GetAllUserTokens(userId, ...)`、`GetTokenKeysByIds(ids, userId)` 这样的模型查询。
+
+这意味着：
+
+- 普通用户只能管理自己的 token
+- admin 登录后也只能管理自己名下的 token
+- admin 不能通过现有控制台接口直接查看其他用户的完整 `sk-xxx`
+- admin 也不能直接替其他用户增删改其 token
+
+换句话说，这里的权限模型不是“管理员可代管所有 API Key”，而是“Token 永远按 `user_id` 归属隔离”。
+
+### 2. 用户自助充值也只作用于自己
+
+用户侧的充值与兑换入口位于 `/api/user/*` 的 self 路由组，例如：
+
+- `POST /api/user/topup`
+- `POST /api/user/pay`
+- `POST /api/user/stripe/pay`
+- `POST /api/user/waffo/pay`
+
+这些流程都基于当前登录用户上下文取 `id`，不是请求里自由指定目标用户。
+
+因此从产品语义上讲：
+
+- 普通用户只能给自己发起充值
+- 普通用户不能给别的用户充值
+
+### 3. admin 可以给其他用户调额度，但方式不是“代管 token”
+
+管理员确实可以影响其他用户的“余额/额度”，但入口不是 `/api/token/*`，而是用户管理接口：
+
+- `POST /api/user/manage`
+
+其中 `action = "add_quota"` 时支持三种模式：
+
+- `add`
+- `subtract`
+- `override`
+
+也就是：
+
+- 给用户加额度
+- 给用户减额度
+- 直接覆盖用户当前额度
+
+这是一种“用户配额管理”能力，不是“替用户管理 API Token”的能力。前端新版控制台也有对应的管理员额度调整弹窗。
+
+### 4. admin 可以看全站充值记录，也可以补单
+
+管理员在充值体系里还有两项平台级能力：
+
+- `GET /api/user/topup`
+  查看全平台充值记录
+- `POST /api/user/topup/complete`
+  手动把待支付订单补成成功
+
+但要注意，补单并不是“管理员随意指定充值到谁账户”，而是：
+
+- 订单创建时已经绑定 `topups.user_id`
+- 补单时只是把那笔订单对应用户的额度补上
+
+所以这里的语义更准确地说是“运营补单”，不是“admin 任意代充到任意账户”。
+
+## 一句话结论
+
+如果只问这套系统当前的权限边界，最简洁的结论是：
+
+- token：每个登录用户只能维护自己的 token，admin 也不能直接查看或维护其他用户的完整 `sk-xxx`
+- 自助充值：用户只能给自己发起
+- 用户额度调整：admin 可以给其他用户加减额度或覆盖额度
+- 充值记录与补单：admin 可以查看全站记录，并把既有订单补单完成
 
 ## 多种登录与绑定方式
 
