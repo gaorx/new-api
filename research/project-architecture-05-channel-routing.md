@@ -17,6 +17,113 @@
 
 最后选出一个 Channel。
 
+## `group` 不只是 quota 缩放规则
+
+如果只看计费代码，容易把 `group` 理解成“决定 quota 倍率的标签”。  
+但从整个系统实现看，`group` 的职责明显更宽，它更像一个统一的业务分层抽象。
+
+至少有下面几类作用：
+
+1. 路由与资源池选择
+   请求最终不是按“用户”直接选 channel，而是按 `usingGroup + model` 选候选 channel；`auto` 分组还支持在多个真实 group 之间切换与重试。
+
+2. 权限与可用范围控制
+   用户所属 group 会影响“他还能访问哪些 group”。也就是说，group 不只是计费标签，还是可访问资源池范围的一部分。
+
+3. 限流策略分层
+   模型请求限流可以按 group 覆盖默认阈值，因此不同 group 可以天然拥有不同速率上限。
+
+4. 充值/支付定价
+   用户充值金额也可以按 group 套不同倍率，而不只是调用模型时的 quota 结算才看 group。
+
+5. 订阅/套餐升级
+   某些订阅套餐会直接把用户升级到另一个 group，因此 group 同时承担“用户档位/套餐层级”的语义。
+
+所以更准确地说，`group` 在这个项目里同时承载：
+
+- 资源池路由标签
+- 权限分层标签
+- 定价标签
+- 限流分层标签
+- 套餐/订阅层级标签
+
+`quota` 缩放只是其中一项，不是它唯一的存在理由。
+
+## `group` 本身没有独立主表
+
+这个项目当前并不存在一个专门的 `groups` 主表。
+
+更准确地说，group 的“定义来源”是两层：
+
+1. `options` 表中的若干配置项
+2. 各业务表中对 group 名称的引用字段
+
+其中系统当前“有哪些 group”最核心的来源并不是 `users.group`、`tokens.group` 或 `channels.group`，而是 `options` 里的 `GroupRatio` 配置项。
+
+这也是为什么 `GetGroups()` 并不是去查某张 `groups` 表，而是直接遍历 `GroupRatio` 的 key 来返回分组名。
+
+业务表中的这些字段：
+
+- `users.group`
+- `tokens.group`
+- `channels.group`
+- `abilities.group`
+
+更像是在“引用某个已存在的 group 名”，而不是定义 group 本身。
+
+## `user.group`、`token.group` 与请求使用分组
+
+这里有一个很容易误解的点：请求运行时使用的 `group`，不一定等于用户默认分组。
+
+当前实现里：
+
+- `users.group` 表示用户默认所属分组
+- `tokens.group` 表示该 token 希望请求默认落到哪个分组
+- 真正选路使用的是请求上下文里的 `usingGroup`
+
+`TokenAuth()` 的行为大致是：
+
+1. 先取 `user.group`
+2. 如果 `token.group` 非空，则检查这个分组是否属于该用户可用分组
+3. 若校验通过，用 `token.group` 覆盖本次请求的 `usingGroup`
+4. 后续 `Distribute()` 和 Relay 重试都使用这个 `usingGroup`
+
+所以更准确地说：
+
+- 一个用户有一个默认 group
+- 一个 token 也可以单独绑定一个 group
+- 单个 token 只能配置一个 group 值
+- 但同一个用户可以持有多个 token，分别把请求导向不同 group
+
+这也是为什么“请求使用哪个 group”必须放在运行时上下文里，而不是只看 `users.group`。
+
+## `group` 和 `channel` 的关系是多对多
+
+当前系统里，`channel` 与 `group` 不是严格一对一外键关系，而是多对多关系，只是建模方式比较轻量。
+
+`channels.group` 本身就是一个逗号分隔字符串，例如：
+
+- `default`
+- `default,vip`
+- `vip,internal,batch`
+
+这意味着：
+
+- 一个 `group` 可以对应多个 `channel`
+- 一个 `channel` 也可以同时服务多个 `group`
+
+因此运行时真正要解决的问题不是：
+
+```text
+group -> channel
+```
+
+而是：
+
+```text
+group + model -> candidate channels
+```
+
 ## Ability 驱动选路
 
 真正的选路主要依赖 `Ability`：
@@ -134,6 +241,155 @@ request
 ```
 
 从架构语义上看，`abilities` 是数据库中的能力索引表，而 `group2model2channels` 是它在进程内的热路径投影。
+
+### `group x model` 到 `channels` 的具体匹配过程
+
+如果把选路过程展开，运行时逻辑可以近似理解成：
+
+```text
+请求进入
+  -> TokenAuth 确定 usingGroup
+  -> Distribute 解析 model
+  -> 尝试命中 affinity 里的 preferred channel
+     -> 如果命中，还要校验这个 channel 是否仍然属于当前 group + model
+  -> 若 affinity 未命中或校验失败
+     -> 按 usingGroup + model 查询候选 channels
+  -> 在候选 channels 中按 priority / weight 选一个
+```
+
+其中“按 `usingGroup + model` 查询候选 channels”又分两种实现路径。
+
+### 有内存缓存时：走 `group2model2channels`
+
+开启 `MEMORY_CACHE_ENABLED` 时，系统会在后台把启用中的 channel 预展开成进程内索引：
+
+```text
+group2model2channels[group][model] = []channel_id
+```
+
+构建过程本质上是：
+
+1. 遍历所有启用中的 `channel`
+2. 把 `channel.Group` 按逗号拆成多个 group
+3. 把 `channel.Models` 按逗号拆成多个 model
+4. 对每个 `group x model` 组合，把 `channel.Id` 追加进去
+5. 再按 `priority` 对候选 `channel_id` 列表排序
+
+所以某条 channel 若配置为：
+
+- `group = default,vip`
+- `models = gpt-4o,gpt-4.1`
+
+它会在内存中同时出现在四个索引位置：
+
+- `default x gpt-4o`
+- `default x gpt-4.1`
+- `vip x gpt-4o`
+- `vip x gpt-4.1`
+
+运行时查询时，`GetRandomSatisfiedChannel(group, model, retry)` 的匹配顺序是：
+
+1. 先精确查 `group2model2channels[group][model]`
+2. 若没有结果，再把 model 名做一次归一化
+3. 再查 `group2model2channels[group][normalizedModel]`
+4. 仍无结果则视为“该 group 下无可用 channel”
+
+这里的模型归一化主要用于兼容某些带动态后缀的模型名，例如：
+
+- `gpt-4-gizmo-*`
+- `gpt-4o-gizmo-*`
+- 部分 Gemini thinking budget 变体
+
+### 无内存缓存时：走 `abilities` 表
+
+关闭内存缓存时，并不是改成另一套业务规则，而是回退到数据库索引层。
+
+这时系统会基于 `abilities` 表做查询：
+
+```text
+WHERE group = ? AND model = ? AND enabled = true
+```
+
+然后：
+
+1. 先根据 `retry` 决定应该使用哪一档 `priority`
+2. 再取该优先级下的全部 `Ability`
+3. 用 `weight` 在这些 `Ability` 对应的 channel 里做加权随机
+4. 最终拿到 `channel_id` 并取回 `Channel`
+
+因此：
+
+- 有缓存：查内存索引 `group2model2channels`
+- 无缓存：查数据库索引 `abilities`
+
+但两者的目标语义并没有变，仍然都是：
+
+```text
+group + model
+  -> 候选 channels
+  -> priority 分层
+  -> 层内按 weight 选择
+```
+
+所以它们不是“完全不同机制”，而是：
+
+- 同一套路由语义
+- 两种不同的数据索引实现
+
+### 为什么看起来像两套机制
+
+之所以容易误以为它们完全不同，是因为两条路径读取的数据层不一样：
+
+- 内存缓存路径主要从 `channels.group + channels.models` 预展开
+- 数据库回退路径主要直接查 `abilities`
+
+这意味着如果出现极端一致性问题，例如：
+
+- `channel` 已更新
+- 但 `abilities` 尚未正确重建
+- 或某节点内存缓存还没同步到最新状态
+
+那么有缓存路径和无缓存路径在短时间内可能表现不一致。
+
+但从设计目标看，`abilities` 是数据库中的持久化路由索引，`group2model2channels` 是它的热路径内存投影；两者不是为了表达两套不同规则，而是为了在不同运行模式下承载同一套路由语义。
+
+## 一条完整的请求选路链路
+
+如果把从入口到最终选中 channel 的主路径串起来，可以概括为：
+
+```text
+/v1/... 请求
+  -> TokenAuth()
+     -> 校验 token
+     -> 读取 user.group
+     -> 若 token.group 非空且用户有权使用，则覆盖 usingGroup
+     -> 写入 token model limit / cross-group retry / specific channel 等上下文
+  -> ModelRequestRateLimit()
+  -> Distribute()
+     -> 从请求体中解析 model
+     -> 检查 token 的 model limit
+     -> 读取 usingGroup
+     -> 若是 Playground，可再按请求体覆盖 group
+     -> 尝试命中 channel affinity
+        -> 并校验 preferred channel 是否仍满足当前 group + model
+     -> 若未命中
+        -> 若 usingGroup != auto
+           -> 直接按 group + model 选 channel
+        -> 若 usingGroup == auto
+           -> 取用户可用 autoGroups
+           -> 依次尝试每个真实 group
+           -> 必要时按 cross-group retry 切到下一个 group
+     -> 把选中的 channel 信息写入 context
+  -> controller.Relay()
+  -> relay/channel/* 上游适配器
+```
+
+这条链上：
+
+- `Channel` 是原始配置对象
+- `Ability` 是展开后的数据库索引对象
+- `group2model2channels` 是运行时内存索引
+- `Distribute()` 是“把请求翻译成具体路由结果”的执行点
 
 ## Auto Group
 

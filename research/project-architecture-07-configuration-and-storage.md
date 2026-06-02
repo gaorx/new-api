@@ -171,6 +171,46 @@ console_setting.announcements
 
 这类配置依然支持热更新，但代码组织上更分散，也更依赖字符串 key。
 
+### group 定义主要落在 `options` 表，而不是独立 `groups` 表
+
+`group` 在这个项目里很重要，但当前并没有单独的 `groups` 主表。
+
+分组定义本身主要散落在 `options` 表里的几项配置中，最核心的是：
+
+- `GroupRatio`
+  这是系统当前 group 集合最核心的来源。配置 JSON 的 key 基本就构成了“系统里有哪些 group”。
+
+- `UserUsableGroups`
+  定义 group 的展示文案，以及默认哪些 group 可供用户使用。
+
+- `AutoGroups`
+  定义 `auto` 分组模式下会轮询哪些真实 group。
+
+- `GroupGroupRatio`
+  定义“用户所属 group -> 实际使用 group”的特殊倍率映射。
+
+此外还有一些与 group 强相关、但不直接充当“group 名单定义”的配置：
+
+- `TopupGroupRatio`
+- `ModelRequestRateLimitGroup`
+
+因此从配置角度更准确地说：
+
+```text
+没有独立 groups 表
+  -> group 名单主要来自 options.GroupRatio
+  -> 其他 options 键补充分组的可用性、auto 路由、特殊倍率、限流和充值规则
+```
+
+而业务表中的：
+
+- `users.group`
+- `tokens.group`
+- `channels.group`
+- `abilities.group`
+
+主要是在引用这些配置里约定好的 group 名。
+
 ### `setting/` 内部也不是完全统一的
 
 虽然很多新代码已经迁到结构化配置，但 `setting/` 目录内部仍然同时存在几种形态：
