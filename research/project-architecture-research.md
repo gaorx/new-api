@@ -47,6 +47,7 @@
 | `15-payment-system` | 支付网关、支付方式、充值/订阅订单完成链路 | 这个项目到底支持哪些支付，钱怎么变成 quota 或订阅 |
 | `relay.md` | Relay 协议互转专题 | 是不是统一转 OpenAI，哪些地方直通 |
 | `chat-completions-relay-flow.md` | `/v1/chat/completions` 专项链路 | 这个接口的特殊分支怎么走 |
+| `log.md` | Relay/消费/错误日志专题 | 调用日志记不记、记在哪、不同路径长什么样 |
 | `options.md` | `options` 表配置键专题 | 某个 option key 是干什么的 |
 | `database-schema-summary.md` | 数据库表结构与关系总表 | 某张表存什么、字段怎么分工 |
 

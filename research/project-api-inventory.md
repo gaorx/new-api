@@ -84,6 +84,22 @@
 - `GET /api/user/oauth/bindings`：获取当前用户已绑定的 OAuth 账号列表。
 - `DELETE /api/user/oauth/bindings/:provider_id`：解绑当前用户的指定 OAuth 账号。
 
+### 补充：普通用户、`user.group` 与 `token.group`
+
+- `user.group` 与 `token.group` 是两层不同概念：前者是用户自身所属分组，后者是某个 API Key/令牌在调用时使用的分组。
+- 普通用户登录后可以通过 `GET /api/user/self` 看到自己的 `group`，但 `PUT /api/user/self` 的自助更新逻辑只覆盖 `username`、`display_name`、`password` 与部分设置，不提供主动修改 `user.group` 的能力。
+- 管理员可以通过 `PUT /api/user` 更新用户资料，并且后端 `model.User.Edit()` 会实际写入 `group` 字段，因此普通用户的 `user.group` 主要由管理员被动设置。
+- 订阅系统是一个例外：如果订阅套餐配置了 `upgrade_group`，购买或生效后会自动把用户切到对应 `user.group`，到期后再按逻辑回退。
+- `GET /api/user/groups` / `GET /api/user/self/groups` 返回的不是“用户当前所属单一 group”，而是“当前用户可用的 group 列表及说明”，它是前端创建/编辑 API Key 时的候选来源。
+
+### 补充：普通用户如何在前端设置 `token.group`
+
+- 普通用户可在前端 `/_authenticated/keys` 页面管理自己的 API Key；页面入口对应 `web/default/src/routes/_authenticated/keys/index.tsx`。
+- 页面右上角 `Create API Key` 按钮会打开 `ApiKeysMutateDrawer`，其 `Group` 下拉框就是 `token.group` 的设置入口。
+- 该下拉框会先请求 `GET /api/user/self/groups` 获取“当前用户可用的分组”，然后允许用户在这些候选项中选择。
+- 如果用户把某个 token 的 group 设为 `auto`，前端还会显示 `Cross-group retry` 选项，对应后端的 `cross_group_retry`。
+- 因此，普通用户可以主动设置自己 token 的 `group`，但只能在系统判定“当前用户有权限使用”的 group 范围内选择。
+
 ## 三、用户管理接口
 
 - `GET /api/user`：分页获取全部用户列表。
@@ -228,6 +244,12 @@
 - `GET /api/data`：获取全站按日期聚合的额度数据。
 - `GET /api/data/users`：获取按用户聚合的额度日期数据。
 - `GET /api/data/self`：获取当前用户按日期聚合的额度数据。
+
+### 补充：`/api/token` 接口的 group 语义
+
+- `POST /api/token` 与 `PUT /api/token` 都允许普通用户提交 `group` 字段，因此用户可以在创建或编辑 API Key 时主动设置 `token.group`。
+- 但 `token.group` 的可写不等于可任意使用：真正请求模型时，`middleware/auth.go` 会检查该 `token.group` 是否属于当前用户可用分组；如果不在允许范围内，请求会被拒绝。
+- 从实际效果看，普通用户拥有“为自己的 token 选择 group”的能力，但不拥有“越权声明任意 group 并成功使用”的能力。
 
 ## 八、分组、任务、供应商与模型管理接口
 

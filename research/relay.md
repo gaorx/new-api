@@ -271,7 +271,161 @@ channel 中保存的是类似 `id.secret` 的原始密钥材料，请求前会�
 
 不是“每次转发时现场申请一个新的永久 API key”。
 
-## 5. 一页结论
+## 5. `codex relay` 和 `openai relay` 的差异
+
+如果只看网关入口，`codex` 和 `openai` 都可以从统一的 `/v1/*` 路由进入，因此表面上都像“OpenAI 风格接口”。
+
+但从实际 adaptor 与上游行为看，`codex` 不是普通 `openai` channel 的别名，而是一个独立渠道类型：
+
+- `openai` 对应 `constant.ChannelTypeOpenAI`
+- `codex` 对应 `constant.ChannelTypeCodex`
+- `relay.GetAdaptor()` 会把两者分发到不同 adaptor
+
+可以把它理解成：
+
+```text
+统一客户端入口
+  -> 相同的 Relay 运行时
+  -> 不同的 channel adaptor
+  -> 不同的真实上游协议
+```
+
+### 5.1 路由入口看起来相似，但上游目标不同
+
+项目对外暴露的 Relay 入口没有专门单独开一个 `/v1/codex/...`。
+
+文本相关常见入口仍然是：
+
+- `/v1/chat/completions`
+- `/v1/responses`
+- `/v1/responses/compact`
+
+真正的区别发生在渠道分发之后：
+
+- `openai` 默认上游 base URL 是 `https://api.openai.com`
+- `codex` 默认上游 base URL 是 `https://chatgpt.com`
+
+而且 `codex` adaptor 会把请求真正转发到：
+
+- `/backend-api/codex/responses`
+- `/backend-api/codex/responses/compact`
+
+这说明它对接的不是标准 OpenAI 公共 API 路径，而是 ChatGPT/Codex 后台接口。
+
+### 5.2 `openai` 支持的能力面更大，`codex` 被刻意收窄
+
+`openai` adaptor 支持的能力非常多，包含：
+
+- `/v1/chat/completions`
+- `/v1/responses`
+- `/v1/embeddings`
+- image / audio / realtime
+- Claude/Gemini 请求桥接到 OpenAI 风格请求
+
+而 `codex` adaptor 明确只支持：
+
+- `/v1/responses`
+- `/v1/responses/compact`
+
+以下入口在 `codex` adaptor 中会直接返回不支持：
+
+- `/v1/chat/completions`
+- `/v1/messages`
+- `/v1/embeddings`
+- `/v1/rerank`
+- image / audio 相关入口
+
+所以 `codex` 不是“兼容 OpenAI 全家桶”的上游，更像一个只接入 Responses 家族的专门实现。
+
+### 5.3 `codex` 的鉴权材料不是普通 API key
+
+`openai` channel 最常见的模式是：
+
+- channel `key` 直接保存普通 API key
+- 请求头使用 `Authorization: Bearer <api_key>`
+
+`codex` channel 则不同。它要求 channel `key` 是一个 JSON，对象中至少包含：
+
+- `access_token`
+- `account_id`
+
+通常还会带：
+
+- `refresh_token`
+- `expired`
+- `last_refresh`
+- `email`
+
+因此从系统设计上看，`codex` 更接近“保存一份 OAuth 会话凭证”，而不是“保存一把静态 API key”。
+
+### 5.4 `codex` 的请求头和请求体也有特殊约束
+
+`codex` 转发时会额外设置一组专用头：
+
+- `Authorization: Bearer <access_token>`
+- `chatgpt-account-id: <account_id>`
+- `originator: codex_cli_rs`
+- `OpenAI-Beta: responses=experimental`
+
+并且它对 `Content-Type` 更严格，会强制使用精确的 `application/json`。
+
+请求体侧也有一些 Codex 特有兼容逻辑：
+
+- `instructions` 字段必须存在；若客户端没传，会补成空字符串
+- 非 compact 模式下强制 `store=false`
+- 非 compact 模式下会移除 `max_output_tokens`
+- 非 compact 模式下会移除 `temperature`
+
+这说明 `codex` 虽然消费的是 OpenAI Responses 风格 DTO，但上游契约并不等价于普通 OpenAI Responses API。
+
+### 5.5 响应处理层复用了 OpenAI Responses handler
+
+`codex` 的特殊性主要在：
+
+- 上游 URL
+- 鉴权方式
+- 特定请求头
+- 请求体裁剪规则
+
+但在响应解析阶段，它没有单独发明一套完全不同的输出模型，而是复用了：
+
+- `openai.OaiResponsesHandler(...)`
+- `openai.OaiResponsesStreamHandler(...)`
+- `openai.OaiResponsesCompactionHandler(...)`
+
+所以更准确的说法不是“Codex 对客户端暴露了一套完全新的返回格式”，而是：
+
+> 客户端看到的仍然是 OpenAI Responses 风格输出；特殊之处主要体现在它连接的是不同的上游后台接口。
+
+### 5.6 为什么说它“有自己的特殊 API”
+
+从本项目的实现视角，可以明确认为：有。
+
+这里的“特殊 API”不是指网关额外发明了一套客户端公开协议，而是指它对接了 OpenAI/Codex 体系里一套不同于标准公开 API 的后台接口组合，包括：
+
+- `https://chatgpt.com/backend-api/codex/responses`
+- `https://chatgpt.com/backend-api/codex/responses/compact`
+- `https://chatgpt.com/backend-api/wham/usage`
+- `https://auth.openai.com/oauth/authorize`
+- `https://auth.openai.com/oauth/token`
+
+同时项目里还专门为它实现了：
+
+- Codex OAuth 启动
+- Codex OAuth 完成
+- Codex 凭证刷新
+- Codex 用量查询
+
+所以在系统建模上，`codex` 应该被理解成：
+
+```text
+OpenAI 风格客户端入口
+  + Codex 专用凭证
+  + ChatGPT/Codex 后台上游
+  + Responses-only 能力面
+```
+
+## 6. 一页结论
 
 如果只保留最关键的信息，这篇调研可以压缩成下面 5 条：
 
@@ -280,6 +434,7 @@ channel 中保存的是类似 `id.secret` 的原始密钥材料，请求前会�
 3. Claude 和 Gemini 并不总是两两直转，很多时候会借 OpenAI 做桥。
 4. 系统保留同协议直通和 pass-through 旁路，所以不存在“全部强制先转 OpenAI”的硬规则。
 5. 调上游时总是依赖 channel 中预先配置的凭证材料，但这些材料既可能是静态 key，也可能是 OAuth token、动态换取 token 的原始凭证，或本地签名密钥。
+6. `codex` 不是普通 `openai` channel 的模型别名，而是复用 OpenAI Responses 风格输入输出、但连接 ChatGPT/Codex 后台接口的一类独立 channel。
 
 ## 关键参考文件
 
