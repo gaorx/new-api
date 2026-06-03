@@ -9,7 +9,7 @@
 - 支付：用户如何把真实世界的钱变成平台里的可用额度或订阅实例
 - 计费：用户在调用模型时，平台如何把 usage 结算成 quota 扣减
 
-如果你想看请求为什么这样扣费，主文档还是 [project-architecture-06-billing-system.md](/Users/gaorx/Works/my/new-api/research/project-architecture-06-billing-system.md)。  
+如果你想看请求为什么这样扣费，主文档还是 [project-architecture-06-billing-system.md](./project-architecture-06-billing-system.md)。  
 如果你想看项目到底支持哪些支付手段、每种怎么接、订单怎么完成，这篇更合适。
 
 ## 总体结构

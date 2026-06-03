@@ -20,19 +20,19 @@
 - 响应解析
 - 后置计费
 
-这一点在 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go) 中表现得最明显，这个顶层 relay 入口几乎编排了整个生命周期。
+这一点在 [controller/relay.go](../controller/relay.go) 中表现得最明显，这个顶层 relay 入口几乎编排了整个生命周期。
 
 各个模式下的 relay helper 也将转换/转发与计费结算混在一起：
 
-- [relay/compatible_handler.go](/Users/gaorx/Works/my/new-api/relay/compatible_handler.go)
-- [relay/responses_handler.go](/Users/gaorx/Works/my/new-api/relay/responses_handler.go)
-- [relay/embedding_handler.go](/Users/gaorx/Works/my/new-api/relay/embedding_handler.go)
+- [relay/compatible_handler.go](../relay/compatible_handler.go)
+- [relay/responses_handler.go](../relay/responses_handler.go)
+- [relay/embedding_handler.go](../relay/embedding_handler.go)
 
 adaptor 层其实已经很接近一个可复用核心了，但它仍然依赖框架和应用状态：
 
-- [relay/channel/adapter.go](/Users/gaorx/Works/my/new-api/relay/channel/adapter.go)
-- [relay/channel/api_request.go](/Users/gaorx/Works/my/new-api/relay/channel/api_request.go)
-- [relay/channel/openai/adaptor.go](/Users/gaorx/Works/my/new-api/relay/channel/openai/adaptor.go)
+- [relay/channel/adapter.go](../relay/channel/adapter.go)
+- [relay/channel/api_request.go](../relay/channel/api_request.go)
+- [relay/channel/openai/adaptor.go](../relay/channel/openai/adaptor.go)
 
 ## 主要耦合点
 
@@ -65,7 +65,7 @@ adaptor 层其实已经很接近一个可复用核心了，但它仍然依赖框
 
 ### 3. `RelayInfo` 过于庞大且过于应用化
 
-[relay/common/relay_info.go](/Users/gaorx/Works/my/new-api/relay/common/relay_info.go) 中的内容非常杂，混合了：
+[relay/common/relay_info.go](../relay/common/relay_info.go) 中的内容非常杂，混合了：
 
 - 用户 / token / 订阅 / 计费状态
 - 渠道元数据
@@ -977,14 +977,14 @@ Task 类型 relay 比同步 relay 更适合使用 hook，因为它天然带有�
 
 对应起点可以是：
 
-- [relay/compatible_handler.go](/Users/gaorx/Works/my/new-api/relay/compatible_handler.go)
-- [relay/channel/openai/adaptor.go](/Users/gaorx/Works/my/new-api/relay/channel/openai/adaptor.go)
+- [relay/compatible_handler.go](../relay/compatible_handler.go)
+- [relay/channel/openai/adaptor.go](../relay/channel/openai/adaptor.go)
 
 ### Phase 3. 抽 transport 公共能力
 
 把下面文件中的通用请求执行行为抽出来：
 
-- [relay/channel/api_request.go](/Users/gaorx/Works/my/new-api/relay/channel/api_request.go)
+- [relay/channel/api_request.go](../relay/channel/api_request.go)
 
 目标是隔离出：
 
@@ -998,7 +998,7 @@ Task 类型 relay 比同步 relay 更适合使用 hook，因为它天然带有�
 
 ### Phase 4. 让 controller 流程退化为纯编排
 
-重构 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go)，使它变成：
+重构 [controller/relay.go](../controller/relay.go)，使它变成：
 
 1. 解析并校验请求
 2. 构建定价和计费状态

@@ -4,7 +4,7 @@
 
 这个项目的计费不是“请求成功就扣一下额度”，而是一套完整的会话化计费模型。
 
-如果你关心的是“支持哪些支付方式、充值/订阅订单怎么完成、每种支付网关原理有什么差异”，请配合阅读 [project-architecture-15-payment-system.md](/Users/gaorx/Works/my/new-api/research/project-architecture-15-payment-system.md)。
+如果你关心的是“支持哪些支付方式、充值/订阅订单怎么完成、每种支付网关原理有什么差异”，请配合阅读 [project-architecture-15-payment-system.md](./project-architecture-15-payment-system.md)。
 
 这里最重要的前置认知是：
 

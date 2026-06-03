@@ -10,11 +10,11 @@
 
 以下内容已经有主文档，不在这里重复展开：
 
-- Relay 主运行时、`RelayInfo`、`Adaptor`、重试、`service/relay/channel` 依赖链：见 [project-architecture-03-relay-runtime.md](/Users/gaorx/Works/my/new-api/research/project-architecture-03-relay-runtime.md)
-- 渠道选路、Affinity、熔断恢复：见 [project-architecture-05-channel-routing.md](/Users/gaorx/Works/my/new-api/research/project-architecture-05-channel-routing.md)
-- 计费、预扣、结算：见 [project-architecture-06-billing-system.md](/Users/gaorx/Works/my/new-api/research/project-architecture-06-billing-system.md)
-- 任务型 adaptor 与轮询：见 [project-architecture-11-async-tasks-and-background-jobs.md](/Users/gaorx/Works/my/new-api/research/project-architecture-11-async-tasks-and-background-jobs.md)
-- 中间件入口链路：见 [project-architecture-12-middleware-and-request-flow.md](/Users/gaorx/Works/my/new-api/research/project-architecture-12-middleware-and-request-flow.md)
+- Relay 主运行时、`RelayInfo`、`Adaptor`、重试、`service/relay/channel` 依赖链：见 [project-architecture-03-relay-runtime.md](./project-architecture-03-relay-runtime.md)
+- 渠道选路、Affinity、熔断恢复：见 [project-architecture-05-channel-routing.md](./project-architecture-05-channel-routing.md)
+- 计费、预扣、结算：见 [project-architecture-06-billing-system.md](./project-architecture-06-billing-system.md)
+- 任务型 adaptor 与轮询：见 [project-architecture-11-async-tasks-and-background-jobs.md](./project-architecture-11-async-tasks-and-background-jobs.md)
+- 中间件入口链路：见 [project-architecture-12-middleware-and-request-flow.md](./project-architecture-12-middleware-and-request-flow.md)
 
 ## 调研结论
 
@@ -267,8 +267,8 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
 
 这部分只保留凭证使用模式本身；channel 的选路语义和业务含义见：
 
-- [project-architecture-04-core-concepts-and-relationships.md](/Users/gaorx/Works/my/new-api/research/project-architecture-04-core-concepts-and-relationships.md)
-- [project-architecture-05-channel-routing.md](/Users/gaorx/Works/my/new-api/research/project-architecture-05-channel-routing.md)
+- [project-architecture-04-core-concepts-and-relationships.md](./project-architecture-04-core-concepts-and-relationships.md)
+- [project-architecture-05-channel-routing.md](./project-architecture-05-channel-routing.md)
 
 最准确的结论是：
 

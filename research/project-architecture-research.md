@@ -11,25 +11,25 @@
 
 全局概括、顶层架构和核心主线已经统一收敛到：
 
-- [01 - 总览](/Users/gaorx/Works/my/new-api/research/project-architecture-01-overview.md)
+- [01 - 总览](./project-architecture-01-overview.md)
 
 建议阅读顺序如下：
 
-1. [01 - 总览](/Users/gaorx/Works/my/new-api/research/project-architecture-01-overview.md)
-2. [02 - 启动流程与后端分层](/Users/gaorx/Works/my/new-api/research/project-architecture-02-startup-and-backend-layers.md)
-3. [03 - Relay 运行时架构](/Users/gaorx/Works/my/new-api/research/project-architecture-03-relay-runtime.md)
-4. [04 - 核心概念与关系](/Users/gaorx/Works/my/new-api/research/project-architecture-04-core-concepts-and-relationships.md)
-5. [05 - 渠道分发与选路机制](/Users/gaorx/Works/my/new-api/research/project-architecture-05-channel-routing.md)
-6. [06 - 计费体系](/Users/gaorx/Works/my/new-api/research/project-architecture-06-billing-system.md)
-7. [07 - 配置系统与数据存储兼容性](/Users/gaorx/Works/my/new-api/research/project-architecture-07-configuration-and-storage.md)
-8. [08 - 前端控制台架构](/Users/gaorx/Works/my/new-api/research/project-architecture-08-frontend-console.md)
-9. [09 - 横切能力与总体结论](/Users/gaorx/Works/my/new-api/research/project-architecture-09-cross-cutting-capabilities-and-summary.md)
-10. [10 - 认证、安全与权限模型](/Users/gaorx/Works/my/new-api/research/project-architecture-10-auth-and-security.md)
-11. [11 - 异步任务与后台作业](/Users/gaorx/Works/my/new-api/research/project-architecture-11-async-tasks-and-background-jobs.md)
-12. [12 - 中间件职责与请求链路](/Users/gaorx/Works/my/new-api/research/project-architecture-12-middleware-and-request-flow.md)
-13. [13 - 模型元数据、价格来源与请求时序](/Users/gaorx/Works/my/new-api/research/project-architecture-13-model-metadata-pricing-and-request-sequence.md)
-14. [14 - 模型列表与价格接口](/Users/gaorx/Works/my/new-api/research/project-architecture-14-model-list-and-pricing-interfaces.md)
-15. [15 - 支付系统与支付方式专题](/Users/gaorx/Works/my/new-api/research/project-architecture-15-payment-system.md)
+1. [01 - 总览](./project-architecture-01-overview.md)
+2. [02 - 启动流程与后端分层](./project-architecture-02-startup-and-backend-layers.md)
+3. [03 - Relay 运行时架构](./project-architecture-03-relay-runtime.md)
+4. [04 - 核心概念与关系](./project-architecture-04-core-concepts-and-relationships.md)
+5. [05 - 渠道分发与选路机制](./project-architecture-05-channel-routing.md)
+6. [06 - 计费体系](./project-architecture-06-billing-system.md)
+7. [07 - 配置系统与数据存储兼容性](./project-architecture-07-configuration-and-storage.md)
+8. [08 - 前端控制台架构](./project-architecture-08-frontend-console.md)
+9. [09 - 横切能力与总体结论](./project-architecture-09-cross-cutting-capabilities-and-summary.md)
+10. [10 - 认证、安全与权限模型](./project-architecture-10-auth-and-security.md)
+11. [11 - 异步任务与后台作业](./project-architecture-11-async-tasks-and-background-jobs.md)
+12. [12 - 中间件职责与请求链路](./project-architecture-12-middleware-and-request-flow.md)
+13. [13 - 模型元数据、价格来源与请求时序](./project-architecture-13-model-metadata-pricing-and-request-sequence.md)
+14. [14 - 模型列表与价格接口](./project-architecture-14-model-list-and-pricing-interfaces.md)
+15. [15 - 支付系统与支付方式专题](./project-architecture-15-payment-system.md)
 
 ## 文档分工
 

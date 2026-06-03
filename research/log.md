@@ -79,7 +79,7 @@
 
 ### 2.1 主表：`logs`
 
-日志模型定义在 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:34)。
+日志模型定义在 [model/log.go](../model/log.go:34)。
 
 核心字段包括：
 
@@ -110,7 +110,7 @@
 
 日志不是一定和主业务表在同一个数据库里。
 
-初始化逻辑在 [model/main.go](/Users/gaorx/Works/my/new-api/model/main.go:213)：
+初始化逻辑在 [model/main.go](../model/main.go:213)：
 
 - 如果 `LOG_SQL_DSN` 为空，则 `LOG_DB = DB`
 - 如果 `LOG_SQL_DSN` 非空，则日志可以落到独立日志库
@@ -124,7 +124,7 @@
 
 `quota_data` 不是逐条调用明细，而是按小时聚合后的看板统计数据。
 
-定义与写入逻辑见 [model/usedata.go](/Users/gaorx/Works/my/new-api/model/usedata.go:12)。
+定义与写入逻辑见 [model/usedata.go](../model/usedata.go:12)。
 
 它主要用于：
 
@@ -138,20 +138,20 @@
 
 ### 3.1 `LogConsumeEnabled`
 
-消费日志总开关见 [common/constants.go](/Users/gaorx/Works/my/new-api/common/constants.go:115)。
+消费日志总开关见 [common/constants.go](../common/constants.go:115)。
 
 当它关闭时：
 
 - `RecordConsumeLog(...)` 直接返回
 - `LogTypeConsume` 不会写入
 
-对应代码见 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:223)。
+对应代码见 [model/log.go](../model/log.go:223)。
 
 ### 3.2 `ERROR_LOG_ENABLED`
 
-错误日志总开关初始化见 [common/init.go](/Users/gaorx/Works/my/new-api/common/init.go:150)。
+错误日志总开关初始化见 [common/init.go](../common/init.go:150)。
 
-同步 Relay 错误收口处见 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go:481)。
+同步 Relay 错误收口处见 [controller/relay.go](../controller/relay.go:481)。
 
 开启时：
 
@@ -161,13 +161,13 @@
 
 当 `DataExportEnabled` 开启时，消费日志写入后会异步累计到 `quota_data` 聚合缓存。
 
-见 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:268)。
+见 [model/log.go](../model/log.go:268)。
 
 ## 4. Relay 日志写入的主入口
 
 ### 4.1 消费日志
 
-核心函数是 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:223) 的：
+核心函数是 [model/log.go](../model/log.go:223) 的：
 
 - `RecordConsumeLog(c, userId, params)`
 
@@ -181,7 +181,7 @@
 
 ### 4.2 错误日志
 
-核心函数是 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:163) 的：
+核心函数是 [model/log.go](../model/log.go:163) 的：
 
 - `RecordErrorLog(...)`
 
@@ -208,9 +208,9 @@
 
 ## 5. 同步 Relay 的主分派与日志落点
 
-同步 Relay 总入口在 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go:79)。
+同步 Relay 总入口在 [controller/relay.go](../controller/relay.go:79)。
 
-主分派逻辑在 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go:38)：
+主分派逻辑在 [controller/relay.go](../controller/relay.go:38)：
 
 - 图片：`ImageHelper`
 - 音频：`AudioHelper`
@@ -292,7 +292,7 @@
 }
 ```
 
-见 [service/log_info_generate.go](/Users/gaorx/Works/my/new-api/service/log_info_generate.go:236)。
+见 [service/log_info_generate.go](../service/log_info_generate.go:236)。
 
 ### 6.3 音频类
 
@@ -398,7 +398,7 @@
 
 ### 6.7 异步任务提交类
 
-成功提交异步任务后会记消费日志，逻辑见 [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go:737) 和 [service/task_billing.go](/Users/gaorx/Works/my/new-api/service/task_billing.go:19)。
+成功提交异步任务后会记消费日志，逻辑见 [controller/relay.go](../controller/relay.go:737) 和 [service/task_billing.go](../service/task_billing.go:19)。
 
 典型结构：
 
@@ -448,7 +448,7 @@
 
 ### 6.9 违规扣费
 
-见 [service/violation_fee.go](/Users/gaorx/Works/my/new-api/service/violation_fee.go:150)。
+见 [service/violation_fee.go](../service/violation_fee.go:150)。
 
 典型结构：
 
@@ -472,7 +472,7 @@
 
 ### 6.10 错误日志
 
-见 [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go:163)。
+见 [model/log.go](../model/log.go:163)。
 
 典型结构：
 
@@ -572,16 +572,16 @@
 
 推荐从下面这些文件开始看：
 
-- [model/log.go](/Users/gaorx/Works/my/new-api/model/log.go)
-- [model/usedata.go](/Users/gaorx/Works/my/new-api/model/usedata.go)
-- [model/main.go](/Users/gaorx/Works/my/new-api/model/main.go)
-- [controller/relay.go](/Users/gaorx/Works/my/new-api/controller/relay.go)
-- [service/text_quota.go](/Users/gaorx/Works/my/new-api/service/text_quota.go)
-- [service/quota.go](/Users/gaorx/Works/my/new-api/service/quota.go)
-- [service/log_info_generate.go](/Users/gaorx/Works/my/new-api/service/log_info_generate.go)
-- [service/task_billing.go](/Users/gaorx/Works/my/new-api/service/task_billing.go)
-- [service/violation_fee.go](/Users/gaorx/Works/my/new-api/service/violation_fee.go)
-- [relay/mjproxy_handler.go](/Users/gaorx/Works/my/new-api/relay/mjproxy_handler.go)
+- [model/log.go](../model/log.go)
+- [model/usedata.go](../model/usedata.go)
+- [model/main.go](../model/main.go)
+- [controller/relay.go](../controller/relay.go)
+- [service/text_quota.go](../service/text_quota.go)
+- [service/quota.go](../service/quota.go)
+- [service/log_info_generate.go](../service/log_info_generate.go)
+- [service/task_billing.go](../service/task_billing.go)
+- [service/violation_fee.go](../service/violation_fee.go)
+- [relay/mjproxy_handler.go](../relay/mjproxy_handler.go)
 
 ## 11. 一句话总结
 

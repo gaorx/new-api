@@ -6,10 +6,10 @@
 
 以下通用内容已经有主文档，不在这里重复展开：
 
-- Relay 总运行时、重试、预扣费、`service -> relay -> relay/channel`：见 [project-architecture-03-relay-runtime.md](/Users/gaorx/Works/my/new-api/research/project-architecture-03-relay-runtime.md)
-- 中间件链、`TokenAuth()`、`Distribute()`、`ModelRequestRateLimit()`：见 [project-architecture-12-middleware-and-request-flow.md](/Users/gaorx/Works/my/new-api/research/project-architecture-12-middleware-and-request-flow.md)
-- 计费体系、quota、正式结算：见 [project-architecture-06-billing-system.md](/Users/gaorx/Works/my/new-api/research/project-architecture-06-billing-system.md)
-- 协议互转与 OpenAI 作为事实中间桥：见 [relay.md](/Users/gaorx/Works/my/new-api/research/relay.md)
+- Relay 总运行时、重试、预扣费、`service -> relay -> relay/channel`：见 [project-architecture-03-relay-runtime.md](./project-architecture-03-relay-runtime.md)
+- 中间件链、`TokenAuth()`、`Distribute()`、`ModelRequestRateLimit()`：见 [project-architecture-12-middleware-and-request-flow.md](./project-architecture-12-middleware-and-request-flow.md)
+- 计费体系、quota、正式结算：见 [project-architecture-06-billing-system.md](./project-architecture-06-billing-system.md)
+- 协议互转与 OpenAI 作为事实中间桥：见 [relay.md](./relay.md)
 
 本文重点回答：
 

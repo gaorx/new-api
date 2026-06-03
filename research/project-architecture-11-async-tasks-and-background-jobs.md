@@ -331,7 +331,7 @@
 
 更细的字段说明可以看：
 
-- [database-schema-summary.md](/Users/gaorx/Works/my/new-api/research/database-schema-summary.md)
+- [database-schema-summary.md](./database-schema-summary.md)
 
 这里先从运行时职责角度，把字段分成四组。
 
