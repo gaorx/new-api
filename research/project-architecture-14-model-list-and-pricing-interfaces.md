@@ -16,14 +16,11 @@
 - `/v1/models` 和价格页展示的模型是不是同一套
 - `abilities`、`models`、`pricing` 三者谁是主数据源
 
-这一节只回答这几个问题，并把关键链路画成一张图。
+这一节只保留接口边界本身：
 
-如果你还想继续往下追两类相邻问题，可以配合阅读：
-
-- `research/project-architecture-05-channel-routing.md`
-  这一篇更偏运行时视角，重点解释 `group + model -> abilities -> channel` 的分发与重试。
-- `research/project-architecture-13-model-metadata-pricing-and-request-sequence.md`
-  这一篇更偏元数据、供应商、价格来源和请求时序的整体串联。
+- `05` 负责运行时选路。
+- `13` 负责元数据、供应商、价格来源与刷新机制。
+- 本文只回答接口各自返回什么，以及三者边界如何记忆。
 
 ## 一句话结论
 
@@ -349,9 +346,9 @@ abilities + models(meta) + pricing config -> /api/pricing
 
 如果你准备继续追代码，推荐按下面顺序读：
 
-1. `research/project-architecture-14-model-list-and-pricing-interfaces.md`
-2. `research/project-architecture-05-channel-routing.md`
-3. `research/project-architecture-13-model-metadata-pricing-and-request-sequence.md`
+1. `research/project-architecture-05-channel-routing.md`
+2. `research/project-architecture-13-model-metadata-pricing-and-request-sequence.md`
+3. `research/project-architecture-14-model-list-and-pricing-interfaces.md`
 
 这样会比较容易把：
 

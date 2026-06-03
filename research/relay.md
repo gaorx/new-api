@@ -196,26 +196,19 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
 
 实际情况更细一点。
 
-#### 跨协议流式 relay：通常逐 chunk 转换
+最简化的判断规则只有两条：
 
-当上游格式和下游格式不同，例如：
+1. 上下游协议不同，通常逐 chunk 转换。
+2. 上下游同为 OpenAI 风格时，通常逐 chunk 处理，但未必逐 chunk 改写。
+
+典型跨协议例子：
 
 - `Gemini -> OpenAI`
 - `OpenAI -> Claude`
 - `OpenAI -> Gemini`
 - `Baidu -> OpenAI`
 
-系统通常会对每个 chunk 做：
-
-```text
-解码上游 chunk
-  -> 转成目标协议 chunk
-  -> 立即下发
-```
-
-因此跨协议流式场景里，说“每个 chunk 都要转换”基本是成立的。
-
-#### 同协议 OpenAI 风格流：逐 chunk 处理，但不一定逐 chunk 改写
+这类场景通常会经历“解码当前 provider chunk -> 转成目标协议 chunk -> 立即下发”。
 
 如果上下游本来都是 OpenAI 风格 SSE，而且没有开启格式改写开关，那么链路更接近：
 
@@ -225,19 +218,10 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
   -> 对外大多直接发送原 chunk
 ```
 
-也就是说：
-
-- 系统仍然会处理每个 chunk
-- 但不一定会把每个 chunk 都重建成一个新对象再输出
-
-#### 会让同协议流也进入逐 chunk 改写的典型开关
-
-即使是 `OpenAI -> OpenAI`，只要开启以下行为，chunk 仍可能被逐块改写：
+会让同协议流也进入逐 chunk 改写的典型开关有：
 
 - `force_format`
 - `thinking_to_content`
-
-这类逻辑会在流式发送阶段重写内容片段或 reasoning/thinking 的表达方式。
 
 所以更准确的概括是：
 

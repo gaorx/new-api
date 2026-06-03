@@ -226,69 +226,13 @@ Chat Completions Request
 
 ### 4.2.1 “边读边发”不等于“每个 chunk 都一定重写”
 
-这个问题在排查性能和兼容性时很常见，准确说法要分两类：
+这一点的通用判断规则已经在 `research/relay.md` 统一展开，这里只保留 chat 链路里最相关的结论：
 
-#### 情况 A：上游和下游格式不同
+- 跨协议流式 relay 时，chat chunk 通常需要在线转换。
+- 同为 OpenAI 风格流时，chat chunk 仍会被逐块消费和观察，但很多情况下可以基本按原 chunk 转发。
+- 即使是 `OpenAI -> OpenAI`，只要开启 `force_format` 或 `thinking_to_content`，chat chunk 仍可能被逐块改写。
 
-如果是跨协议流式 relay，通常**每个 chunk 都要在线转换**。
-
-典型模式是：
-
-```text
-收到一个上游 chunk
-  -> 反序列化成当前 provider 的流式 DTO
-  -> 转成目标协议 chunk
-  -> 立刻写给客户端
-```
-
-常见例子：
-
-- `Gemini SSE -> OpenAI SSE`
-- `OpenAI SSE -> Claude SSE`
-- `OpenAI SSE -> Gemini SSE`
-- `Baidu SSE -> OpenAI SSE`
-
-所以在跨协议流式场景里，可以近似理解成：
-
-```text
-一块进
-一块转
-一块出
-```
-
-#### 情况 B：上游和下游都是 OpenAI 风格流
-
-如果本次 relay 输出格式本来就是 OpenAI，且没有开启额外改写开关，那么**未必需要把每个 chunk 重新改写后再发**。
-
-更准确地说：
-
-- 系统仍然会逐 chunk 读取
-- 仍然会逐 chunk 解析一遍，用于累计文本、tool call、usage 估算等内部逻辑
-- 但对客户端回写时，很多情况下可以基本按原 chunk 直接转发
-
-也就是说，这一类更接近：
-
-```text
-每个 chunk 都会被消费和观察
-但不一定都会被重写
-```
-
-#### 哪些开关会让 OpenAI -> OpenAI 也发生 chunk 改写
-
-即使上下游都是 OpenAI 风格流，只要开启以下能力，chunk 仍然可能被逐块改写：
-
-- `force_format`
-- `thinking_to_content`
-
-这类逻辑会在流式发送阶段把：
-
-- reasoning / thinking 字段
-- 内容片段形态
-- 最终补发 usage / stop 的行为
-
-做额外规整。
-
-所以一句话总结这段差别：
+也就是说，在 `/v1/chat/completions` 这条链路里，需要区分“逐 chunk 处理”与“逐 chunk 重写”这两件事：
 
 > Chat 流式 relay 总是“逐 chunk 处理”，但只有跨协议转换或显式开启格式改写时，才基本等价于“每个 chunk 都要转换”。
 
