@@ -151,6 +151,64 @@ console_setting.announcements
 
 也就是说，代码里是结构化对象，落库时仍然是 `options` 表中的 `key/value`。
 
+### “请求透传”有两层配置，落库位置不同
+
+和 relay 行为强相关的“请求透传”开关分成两层：
+
+1. **全局请求透传**
+2. **单渠道请求体透传**
+
+它们名字相似，但数据库落点并不相同。
+
+#### 全局请求透传：落在 `options` 表
+
+全局开关定义在 `setting/model_setting/global.go` 的 `GlobalSettings` 中，字段名是：
+
+```text
+pass_through_request_enabled
+```
+
+它通过 `config.GlobalConfig.Register("global", &globalSettings)` 注册到结构化配置中心，所以落库后的真实 key 是：
+
+```text
+global.pass_through_request_enabled
+```
+
+也就是说，这个全局开关在数据库中的存储形态是：
+
+```text
+table: options
+key:   global.pass_through_request_enabled
+value: "true" / "false"
+```
+
+#### 单渠道请求体透传：落在 `channels.setting` JSON
+
+单渠道开关不是 `channels` 表里的独立布尔列，而是 `ChannelSettings` JSON 中的一个字段：
+
+```text
+pass_through_body_enabled
+```
+
+`Channel` 模型里的 `Setting *string` 对应数据库列 `setting`，因此单渠道透传的真实存储形态是：
+
+```text
+table: channels
+column: setting
+json key: pass_through_body_enabled
+```
+
+典型值类似：
+
+```json
+{"pass_through_body_enabled":true}
+```
+
+这也解释了为什么排查 relay “未知字段为什么没透传”时，需要同时检查两处：
+
+- `options.key = global.pass_through_request_enabled`
+- `channels.setting` JSON 中是否包含 `pass_through_body_enabled: true`
+
 ### 旧风格配置：`OptionMap` + 全局变量
 
 旧风格配置没有统一 struct，而是：

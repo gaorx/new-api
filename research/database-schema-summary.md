@@ -469,6 +469,11 @@
 | `key` | 配置 | 配置键，主键 |
 | `value` | 配置 | 配置值，文本形式保存 |
 
+补充检索线索：
+
+- 全局“请求透传”开关不在 `channels` 表，而是在这里保存为 `key = global.pass_through_request_enabled`
+- 这类由 `setting/config/ConfigManager` 注册的结构化配置，落库时通常都会被扁平化成 `模块名.字段名`
+
 ---
 
 ## 9. `setups`
@@ -579,6 +584,12 @@
 | `channel_info` | 模型路由 | 多 Key 等运行时结构的 JSON |
 | `settings` | 配置 | 其他设置 JSON，常放 Azure 版本等非检索信息 |
 
+补充检索线索：
+
+- 单渠道“请求体透传”不是独立列，而是保存在 `setting` 这段 JSON 中
+- 对应 JSON key 为 `pass_through_body_enabled`
+- 因此定位某个渠道是否开启请求体透传时，应优先检查 `channels.setting`
+
 ### `channel_info` JSON 内部结构
 
 | 键名 | 用途 |
@@ -656,16 +667,30 @@
 
 用途：前端可复用的预填分组，如模型组、标签组、端点组。
 
+补充理解：
+
+- 这张表更偏前端表单辅助/运营配置，不是模型计费、倍率或路由决策主数据。
+- 在默认前端里，它会被读取后展示成可点击的预设组，例如渠道编辑页模型输入区域下方的 `Preset groups`。
+- 用户点击某个预填组后，前端会把该组里的 `items` 批量填入当前表单，减少重复录入。
+- 因此，如果有人问 `prefill_groups` 是什么，可以直接理解成“给前端一键预填常用配置的一组模板数据”。
+
 | 字段名 | 分组 | 用途 |
 |---|---|---|
 | `id` | 标识 | 主键 |
 | `name` | 展示 | 分组名称 |
 | `type` | 类型 | 分组类型。当前代码注释和前端类型定义中的可选值为 `model` 模型组、`tag` 标签组、`endpoint` 端点组 |
-| `items` | 配置 | JSON 数组，保存分组条目 |
+| `items` | 配置 | 组内条目，使用 JSON 保存。`model` / `tag` 常见为字符串数组；`endpoint` 可能保存端点键名数组或对象形式映射，取决于前端使用场景 |
 | `description` | 展示 | 描述 |
 | `created_time` | 时间 | 创建时间 |
 | `updated_time` | 时间 | 更新时间 |
 | `deleted_at` | 时间 | 软删除时间 |
+
+典型例子：
+
+- `type = model`
+  - `name = "OpenAI 常用模型"`
+  - `items = ["gpt-4o", "gpt-4.1", "gpt-4o-mini"]`
+- 这个预填组被前端读到后，可以一键追加到渠道的模型列表输入框中。
 
 ---
 

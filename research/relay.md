@@ -149,6 +149,100 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
 
 > 在文本聊天这条最核心的 relay 主链路上，OpenAI 结构被广泛复用为桥接层。
 
+### 2.4 OpenAI 兼容入口的“额外字段”默认不会自动透传
+
+这点在排查 OpenAI 兼容调用问题时很重要：
+
+- 默认链路下，请求体会先被解析成 `dto.GeneralOpenAIRequest`
+- 然后再经过 adaptor 修正
+- 最后重新 `Marshal` 成新的 JSON 发给上游
+
+因此：
+
+```text
+下游多传一个字段
+  -> 如果该字段没有定义在 GeneralOpenAIRequest / 对应 DTO 中
+  -> 解析时不会报错
+  -> 但也不会被保存
+  -> 重新序列化后该字段会消失
+```
+
+这意味着系统默认行为更接近：
+
+```text
+结构化重组后转发
+而不是原始 body 透明转发
+```
+
+只有在以下两种情况下，额外字段才可能继续向上游保留：
+
+1. 字段本身已经在 DTO 中显式声明  
+   例如 `metadata`、`prediction`、`reasoning`、`extra_body` 一类字段。
+2. 开启 pass-through 旁路  
+   即全局 `PassThroughRequestEnabled` 或单渠道 `PassThroughBodyEnabled` 为真时，relay 直接复用原始 request body。
+
+所以更准确的经验结论是：
+
+> OpenAI 兼容 relay 默认是“解析为 struct 再重组转发”；未知字段通常会在这里被丢弃，除非显式开启请求体透传。
+
+### 2.5 流式 chat 并不是“一律每个 chunk 都重写”
+
+流式 relay 的一个常见误解是：
+
+```text
+只要是 stream
+  -> 每个 chunk 都一定会被完整转换一次
+```
+
+实际情况更细一点。
+
+#### 跨协议流式 relay：通常逐 chunk 转换
+
+当上游格式和下游格式不同，例如：
+
+- `Gemini -> OpenAI`
+- `OpenAI -> Claude`
+- `OpenAI -> Gemini`
+- `Baidu -> OpenAI`
+
+系统通常会对每个 chunk 做：
+
+```text
+解码上游 chunk
+  -> 转成目标协议 chunk
+  -> 立即下发
+```
+
+因此跨协议流式场景里，说“每个 chunk 都要转换”基本是成立的。
+
+#### 同协议 OpenAI 风格流：逐 chunk 处理，但不一定逐 chunk 改写
+
+如果上下游本来都是 OpenAI 风格 SSE，而且没有开启格式改写开关，那么链路更接近：
+
+```text
+逐 chunk 读取
+  -> 逐 chunk 解析，用于内部统计和 usage 估算
+  -> 对外大多直接发送原 chunk
+```
+
+也就是说：
+
+- 系统仍然会处理每个 chunk
+- 但不一定会把每个 chunk 都重建成一个新对象再输出
+
+#### 会让同协议流也进入逐 chunk 改写的典型开关
+
+即使是 `OpenAI -> OpenAI`，只要开启以下行为，chunk 仍可能被逐块改写：
+
+- `force_format`
+- `thinking_to_content`
+
+这类逻辑会在流式发送阶段重写内容片段或 reasoning/thinking 的表达方式。
+
+所以更准确的概括是：
+
+> 流式 chat relay 总是逐 chunk 消费；跨协议时通常逐 chunk 转换，同协议原样输出时则更多是“逐 chunk 观察和转发”，不一定逐 chunk 重写。
+
 ## 3. RelayFormat 的数量，和“真正参与主互转的格式”不是一回事
 
 按 `types.RelayFormat` 看，项目里声明了 12 种格式：
