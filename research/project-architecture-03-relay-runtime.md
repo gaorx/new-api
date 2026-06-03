@@ -171,6 +171,82 @@ relay -> relay/channel
 1. 请求体会被缓存成可重复读取的 body storage，方便重试时重复发送。
 2. 计费发生在调用前后两个阶段：先预扣，再按实际 usage 结算。
 
+## Relay 完成后，哪些状态会被更新
+
+如果只看“请求已经成功返回给用户”，很容易以为后面只是顺手写一条日志。
+
+但实际在成功结算后，Relay 还会更新多类状态：
+
+1. 用户累计消费：`user.used_quota`
+2. 用户累计请求数：`user.request_count`
+3. 渠道累计消费：`channel.used_quota`
+4. 用户钱包额度或订阅用量结算
+5. token 的 `remain_quota` / `used_quota`
+6. 消费日志与聚合统计
+
+这几类状态并不是统一同步写库。
+
+### 1. `used_quota` / `request_count` 更偏“统计字段”
+
+文本、音频等主链路在成功拿到 usage 后，会调用：
+
+- `model.UpdateUserUsedQuotaAndRequestCount(...)`
+- `model.UpdateChannelUsedQuota(...)`
+
+如果 `BATCH_UPDATE_ENABLED=true`，这些增量可能先进入当前进程内存，再由后台协程按 `BATCH_UPDATE_INTERVAL` 批量刷库。
+
+所以从请求时序看，更接近：
+
+```text
+请求成功
+  -> 计算实际 quota
+  -> 累加统计字段
+  -> 可能先入内存批处理
+  -> 稍后统一写 DB
+```
+
+这也意味着管理后台里看到的：
+
+- `user.used_quota`
+- `user.request_count`
+- `channel.used_quota`
+
+在开启 batch 时不一定是“绝对实时”的。
+
+### 2. `user.quota` 属于余额字段，读路径更依赖缓存
+
+和上面的统计字段不同，用户钱包额度 `user.quota` 在预扣、补扣、退款阶段会调用：
+
+- `IncreaseUserQuota(...)`
+- `DecreaseUserQuota(...)`
+
+这类更新如果 Redis 开启，会异步维护用户缓存中的 `Quota` 字段；数据库侧则根据是否开启 batch 决定是立即写库还是延迟批量刷新。
+
+因此它更像：
+
+```text
+余额字段
+  -> 尽量让缓存先反映最新值
+  -> DB 作为最终一致的持久化结果
+```
+
+### 3. “请求完成”不等于“所有表字段都已立刻持久化”
+
+这一点对排查问题很重要。
+
+在批量更新开启时，一次 relay 成功之后，可能出现下面这种短暂现象：
+
+- 消费日志已经写入
+- 客户端已经收到成功响应
+- 但 `user.used_quota` / `request_count` 还没刷到数据库
+
+所以如果某次排查中发现：
+
+- 日志里已经有消费记录
+- 但用户统计字段还没变化
+
+不一定是 bug，也可能只是 batch 窗口内尚未落库。
+
 ## 转发时的“限流”不只有入口 429
 
 如果只看路由，中间件层最直观的限流是 `ModelRequestRateLimit()`。

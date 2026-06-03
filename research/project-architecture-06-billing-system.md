@@ -262,6 +262,247 @@ quota = usage 的计费映射结果
 
 这也是为什么充值、订阅、请求结算最终都能落到同一套额度系统上。
 
+## Token 到 Quota 的共识公式
+
+如果把实现细节抽掉，项目里把原始 usage token 换成 quota 的主路径可以归纳成下面几类。
+
+### 1. 普通文本模型的倍率计费
+
+主实现位于：
+
+- `relay/helper/price.go`
+- `service/text_quota.go`
+
+可以概括成：
+
+```text
+quota =
+(
+  promptBase
+  + completionTokens * completionRatio
+)
+* modelRatio
+* groupRatio
++ toolSurchargeQuota
++ audioInputSeparateQuota
+```
+
+其中 `promptBase` 不是简单的 `prompt_tokens`，而是会把几类特殊输入拆开后分别乘自己的倍率：
+
+```text
+promptBase =
+  basePromptTokens
+  + cacheReadTokens * cacheRatio
+  + cacheWriteTokens * cacheCreationRatio
+  + cacheWriteTokens5m * cacheCreationRatio5m
+  + cacheWriteTokens1h * cacheCreationRatio1h
+  + imageTokens * imageRatio
+```
+
+如果当前请求还带有 `OtherRatios`，那么在上式算完之后，还会继续整体连乘：
+
+```text
+quota = quota * product(OtherRatios)
+```
+
+### 2. 音频 / 实时场景的倍率计费
+
+主实现位于：
+
+- `service/quota.go`
+
+可概括成：
+
+```text
+quota =
+(
+  inputTextTokens
+  + outputTextTokens * completionRatio
+  + inputAudioTokens * audioRatio
+  + outputAudioTokens * audioRatio * audioCompletionRatio
+)
+* modelRatio
+* groupRatio
+```
+
+这条路径更适合把文本输入、文本输出、音频输入、音频输出分别看成四类计费对象。
+
+### 3. 固定价格模型
+
+如果模型启用了固定价格模式 `usePrice=true`，核心模型费用不再按 token 数线性变化，而是直接走：
+
+```text
+quota = modelPrice * QuotaPerUnit * groupRatio
+```
+
+如果还带 `OtherRatios`，则同样会继续整体连乘：
+
+```text
+quota = modelPrice * QuotaPerUnit * groupRatio * product(OtherRatios)
+```
+
+这类模式常见于：
+
+- 按次计费模型
+- 图片 / 视频任务模型
+- 某些不适合按 token 细分的能力
+
+### 4. Tiered Expression 动态计费
+
+如果模型使用 `tiered_expr` 表达式计费，则先让表达式产出真实价格，再统一折算成 quota：
+
+```text
+quota = exprOutput / 1_000_000 * QuotaPerUnit * groupRatio
+```
+
+这里的 `exprOutput` 是按 `$ / 1M tokens` 表达的实际价格，不再走 `modelRatio`、`completionRatio` 这一套传统倍率链路。
+
+### 5. GroupGroupRatio 对 GroupRatio 的覆盖
+
+还有一个容易忽略的共识是：
+
+- 默认先取 `groupRatio`
+- 如果存在 `userGroup -> usingGroup` 的特殊倍率 `GroupGroupRatio`
+- 则实际参与结算的是这个特殊倍率，而不是普通分组倍率
+
+可以把它理解成：
+
+```text
+actualGroupRatio = GroupGroupRatio or GroupRatio
+```
+
+所以很多公式里写的 `groupRatio`，更准确地说其实是“最终生效分组倍率”。
+
+## 缩放参数字典
+
+下面这些参数就是 token 变成 quota 时最关键的缩放因子。
+
+### 基础倍率
+
+- `modelRatio`
+  含义：模型基础倍率。
+  作用：普通输入/输出 token 的主倍率基数；文本、音频等倍率计费最终都会乘它。
+
+- `groupRatio`
+  含义：当前使用分组的倍率。
+  作用：把同一模型在不同分组上的价格拉开；几乎所有计费路径最终都会乘它。
+
+- `GroupGroupRatio`
+  含义：用户组到使用分组的特殊覆盖倍率。
+  作用：如果命中，它会覆盖普通 `groupRatio`，成为最终生效的分组倍率。
+
+- `QuotaPerUnit`
+  含义：价格结果换算成平台内部 quota 的全局系数。
+  作用：固定价格模式、动态表达式模式、工具附加费、部分单独价格项最后都靠它落到 quota 体系。
+
+### 输入 / 输出细分倍率
+
+- `completionRatio`
+  含义：输出 token 相对输入 token 的倍率。
+  作用：把 `completionTokens` 折算成更高或更低的计费权重。
+
+- `cacheRatio`
+  含义：缓存命中 token 的倍率。
+  作用：把 `cachedTokens` 从普通输入里拆出来单独按缓存读取价计费。
+
+- `cacheCreationRatio`
+  含义：缓存写入 token 的默认倍率。
+  作用：把 `cache creation tokens` 按缓存写入价计费。
+
+- `cacheCreationRatio5m`
+  含义：Claude 5 分钟缓存写入倍率。
+  作用：当上游 usage 能区分 5m 缓存写入时，按这个倍率单独计费。
+
+- `cacheCreationRatio1h`
+  含义：Claude 1 小时缓存写入倍率。
+  作用：当上游 usage 能区分 1h 缓存写入时，按这个倍率单独计费。
+
+- `imageRatio`
+  含义：图片输入 token 的倍率。
+  作用：把图片输入 token 从普通 prompt token 中拆出来单独计费。
+
+- `audioRatio`
+  含义：音频 token 的基础倍率。
+  作用：实时/音频模型里用于音频输入和音频输出的基础价格因子。
+
+- `audioCompletionRatio`
+  含义：音频输出相对音频输入的补全倍率。
+  作用：让 `outputAudioTokens` 在 `audioRatio` 之外再乘一个输出倍率。
+
+### 固定价格参数
+
+- `modelPrice`
+  含义：固定价格模型的基础价格。
+  作用：启用 `usePrice` 时，不再按 token 数乘 `modelRatio`，而是直接用 `modelPrice * QuotaPerUnit * groupRatio` 算核心费用。
+
+### 任务 / 多媒体附加倍率
+
+- `OtherRatios`
+  含义：一组额外附加倍率，通常由任务适配器根据用户请求推导出来。
+  作用：在基础 quota 算完后，再整体连乘，适合表达“时长、尺寸、分辨率、张数”这类非 token 维度的价格放大因子。
+
+当前代码里常见的 `OtherRatios` 键包括：
+
+- `seconds`
+  含义：视频时长倍率。
+
+- `size`
+  含义：尺寸倍率。
+
+- `resolution`
+  含义：分辨率倍率。
+
+### 动态表达式参数
+
+在 `tiered_expr` 模式下，传统的 `modelRatio` / `completionRatio` 不再是主导参数，表达式变量本身就是定价参数：
+
+- `p`
+  含义：输入 token 数。
+
+- `c`
+  含义：输出 token 数。
+
+- `cr`
+  含义：缓存读取 token 数。
+
+- `cc`
+  含义：缓存写入 token 数。
+
+- `cc1h`
+  含义：1 小时缓存写入 token 数。
+
+- `img`
+  含义：图片输入 token 数。
+
+- `ai`
+  含义：音频输入 token 数。
+
+- `ao`
+  含义：音频输出 token 数。
+
+- `len`
+  含义：完整输入上下文长度。
+  作用：更适合做分档条件判断，而不是直接拿来当价格倍率。
+
+## 需要特别区分的“倍率”和“附加费”
+
+严格说，并不是所有影响最终 quota 的参数都属于“乘法倍率”。
+
+项目里还有几类“先单独算一笔 quota，再加到最终结果里”的附加费：
+
+- Web Search 调用价格
+- File Search 调用价格
+- Image Generation Call 按次价格
+- 某些音频输入的单独价格
+
+因此更完整的理解应该是：
+
+```text
+最终 quota
+  = 基础 token 费用 * 各类倍率
+  + 工具或特殊能力的附加费用
+```
+
 ## 表达式计费系统
 
 `pkg/billingexpr/expr.md` 描述了一套完整的“定价 DSL”：
@@ -290,6 +531,120 @@ quota = usage 的计费映射结果
 1. 先用 `Token` 证明“谁在请求”
 2. 再用定价规则把 usage 换成 `quota`
 3. 最后从用户余额、订阅额度和 token 额度上做统一结算
+
+## `quota`、`used_quota`、`request_count` 不是同一种更新策略
+
+这几个字段都和“请求后状态更新”有关，但实现上并不是统一走一套缓存或落库逻辑。
+
+最容易混淆的是：
+
+- `user.quota`
+- `user.used_quota`
+- `user.request_count`
+- `token.remain_quota` / `token.used_quota`
+
+它们在 relay 完成后的更新路径并不相同。
+
+### `user.quota`：每次请求都会产生变更，但未必立刻写 DB
+
+`user.quota` 表示用户钱包额度。
+
+在请求发生预扣、补扣、退款时，最终都会走：
+
+- `model.IncreaseUserQuota(...)`
+- `model.DecreaseUserQuota(...)`
+
+这两个函数的行为是：
+
+1. 如果 Redis 开启，异步更新用户缓存里的 `Quota` 字段。
+2. 如果 `BATCH_UPDATE_ENABLED=true`，把变更先记到进程内存中的 batch store。
+3. 如果没有开启 batch，则直接执行数据库 `UPDATE quota = quota +/- ?`。
+
+所以更准确的描述应该是：
+
+```text
+每次 relay 都会产生 user.quota 的变更
+  -> Redis 用户缓存会尽量跟上
+  -> DB 可能立即更新，也可能延迟批量刷新
+```
+
+这意味着“每次 relay 都更新 quota”是对的，但“每次 relay 都立刻改数据库这一行”并不一定对。
+
+### `user.used_quota` / `user.request_count`：不走 Redis 计数缓存，主要走 DB 或批量刷库
+
+消费结算成功后，文本、音频、图片等主链路通常会调用：
+
+- `model.UpdateUserUsedQuotaAndRequestCount(userId, quota)`
+
+它的行为是：
+
+1. 如果 `BATCH_UPDATE_ENABLED=true`，把 `used_quota += quota` 和 `request_count += 1` 先累加到当前进程内存。
+2. 后台批量更新协程按 `BATCH_UPDATE_INTERVAL` 定时刷回数据库。
+3. 如果没有开启 batch，则直接执行数据库更新。
+
+它**不会**像 `user.quota` 那样维护一份 Redis 计数缓存。
+
+所以：
+
+```text
+user.used_quota / user.request_count
+  -> 不是先写 Redis
+  -> 要么直接写 DB
+  -> 要么先写本机内存聚合，再定时批量写 DB
+```
+
+默认批量刷新间隔来自：
+
+- `BATCH_UPDATE_INTERVAL`
+
+默认值是 `5` 秒。
+
+### `token.remain_quota` / `token.used_quota`：和 `user.quota` 类似，也支持批量落库
+
+调用 token 额度在预扣和退款时，会通过：
+
+- `model.DecreaseTokenQuota(...)`
+- `model.IncreaseTokenQuota(...)`
+
+更新：
+
+- `remain_quota`
+- `used_quota`
+
+如果 Redis 开启，会异步更新 token 缓存；如果 batch 开启，也可能先进入内存聚合，再批量写库。
+
+所以 token 额度侧和 user 钱包额度侧比较像，都是：
+
+- 有缓存层
+- 有可选批量落库
+- 最终真实结算仍然要回到数据库
+
+### 查询侧也不是统一策略
+
+读路径同样分化明显：
+
+- `GetUserQuota(...)` 会优先读 Redis 用户缓存，失败再回数据库。
+- `GetUserUsedQuota(...)` 直接查数据库。
+
+因此，如果 batch 已开启，就要意识到：
+
+- `user.quota` 的读取更容易看到缓存中的较新值
+- `user.used_quota` / `user.request_count` 更可能在几秒内落后于刚发生的请求
+
+### 一句话记忆
+
+可以把这几类数据记成：
+
+```text
+user.quota / token.remain_quota
+  = 热路径余额字段
+  = Redis 缓存 + DB 最终落地
+
+user.used_quota / user.request_count
+  = 统计字段
+  = DB 直写或进程内批量刷库
+  = 默认不走 Redis 计数缓存
+```
 
 ## 计费相关核心对象
 

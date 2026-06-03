@@ -14,10 +14,11 @@
 2. 没有 `TableName()` 覆写的模型，表名按 GORM 默认命名规则推断为“snake_case + 复数”。
 3. 有少数字段带 `gorm:"-"`，这类字段不落库，不计入表字段。
 4. 有些字段是 JSON/TEXT，文档会补充其中常见内部结构。
-5. `logs` 表可能位于主库，也可能位于独立日志库：
+5. 如果字段在代码里存在明确的枚举定义，会在“用途”列中顺带写出可选值及含义。
+6. `logs` 表可能位于主库，也可能位于独立日志库：
    - 如果 `LOG_SQL_DSN` 为空，则与主库共用同一张 `logs` 表
    - 如果 `LOG_SQL_DSN` 不为空，则日志表会迁移到独立日志库
-6. “直接外键”与“隐式外键”的判定依据：
+7. “直接外键”与“隐式外键”的判定依据：
    - 直接外键：结构体 `gorm` tag、显式 `FOREIGN KEY / REFERENCES` DDL、迁移 SQL 中真正声明的数据库外键约束
    - 隐式外键：代码通过 `user_id`、`channel_id`、`plan_id`、`vendor_id`、`provider_id` 等字段在应用层自行维护的逻辑关联
 
@@ -270,37 +271,37 @@
 
 用途：平台用户主表，保存账户身份、额度、分组、第三方绑定、个人设置等信息。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 用户主键 |
-| `username` | 登录用户名，唯一 |
-| `password` | 登录密码哈希 |
-| `display_name` | 显示名称 |
-| `role` | 用户角色，如普通用户、管理员、Root |
-| `status` | 用户状态，如启用、禁用 |
-| `email` | 邮箱 |
-| `github_id` | GitHub 绑定 ID |
-| `discord_id` | Discord 绑定 ID |
-| `oidc_id` | OIDC 绑定 ID |
-| `wechat_id` | 微信绑定 ID |
-| `telegram_id` | Telegram 绑定 ID |
-| `access_token` | 管理端访问令牌 |
-| `quota` | 用户钱包/主额度余额 |
-| `used_quota` | 用户已消耗额度 |
-| `request_count` | 请求次数累计 |
-| `group` | 用户所属分组 |
-| `aff_code` | 邀请码 |
-| `aff_count` | 邀请人数或邀请次数统计 |
-| `aff_quota` | 邀请奖励的剩余额度 |
-| `aff_history` | 邀请累计历史额度 |
-| `inviter_id` | 邀请人用户 ID |
-| `deleted_at` | 软删除时间 |
-| `linux_do_id` | LinuxDO 绑定 ID |
-| `setting` | 用户设置 JSON 文本 |
-| `remark` | 备注 |
-| `stripe_customer` | Stripe 客户 ID |
-| `created_at` | 创建时间 |
-| `last_login_at` | 最后登录时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 用户主键 |
+| `username` | 展示 | 登录用户名，唯一 |
+| `password` | 认证安全 | 登录密码哈希 |
+| `display_name` | 展示 | 显示名称 |
+| `role` | 类型 | 用户角色。可选值：`0=guest` 访客，`1=common` 普通用户，`10=admin` 管理员，`100=root` 超级管理员 |
+| `status` | 状态 | 用户状态。可选值：`1=enabled` 启用，`2=disabled` 禁用 |
+| `email` | 展示 | 邮箱 |
+| `github_id` | 认证安全 | GitHub 绑定 ID |
+| `discord_id` | 认证安全 | Discord 绑定 ID |
+| `oidc_id` | 认证安全 | OIDC 绑定 ID |
+| `wechat_id` | 认证安全 | 微信绑定 ID |
+| `telegram_id` | 认证安全 | Telegram 绑定 ID |
+| `access_token` | 认证安全 | 管理端访问令牌 |
+| `quota` | 额度计费 | 用户钱包/主额度余额 |
+| `used_quota` | 额度计费 | 用户已消耗额度 |
+| `request_count` | 统计 | 请求次数累计 |
+| `group` | 模型路由 | 用户所属分组 |
+| `aff_code` | 标识 | 邀请码 |
+| `aff_count` | 统计 | 邀请人数或邀请次数统计 |
+| `aff_quota` | 额度计费 | 邀请奖励的剩余额度 |
+| `aff_history` | 额度计费 | 邀请累计历史额度 |
+| `inviter_id` | 关联 | 邀请人用户 ID |
+| `deleted_at` | 时间 | 软删除时间 |
+| `linux_do_id` | 认证安全 | LinuxDO 绑定 ID |
+| `setting` | 配置 | 用户设置 JSON 文本 |
+| `remark` | 展示 | 备注 |
+| `stripe_customer` | 额度计费 | Stripe 客户 ID |
+| `created_at` | 时间 | 创建时间 |
+| `last_login_at` | 时间 | 最后登录时间 |
 
 ---
 
@@ -308,25 +309,25 @@
 
 用途：平台发给下游客户端使用的 API Token，不是上游厂商 Key。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 令牌主键 |
-| `user_id` | 所属用户 ID |
-| `key` | 令牌字符串 |
-| `status` | 令牌状态 |
-| `name` | 令牌名称 |
-| `created_time` | 创建时间 |
-| `accessed_time` | 最近访问时间 |
-| `expired_time` | 过期时间，`-1` 表示永不过期 |
-| `remain_quota` | 剩余额度 |
-| `unlimited_quota` | 是否无限额度 |
-| `model_limits_enabled` | 是否启用模型限制 |
-| `model_limits` | 允许访问的模型列表/映射，文本存储 |
-| `allow_ips` | 允许访问的 IP 白名单 |
-| `used_quota` | 已使用额度 |
-| `group` | 令牌使用的逻辑分组 |
-| `cross_group_retry` | 是否允许 auto 分组跨组重试 |
-| `deleted_at` | 软删除时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 令牌主键 |
+| `user_id` | 关联 | 所属用户 ID |
+| `key` | 凭证 | 令牌字符串 |
+| `status` | 状态 | 令牌状态。可选值：`1=enabled` 启用，`2=disabled` 禁用，`3=expired` 已过期，`4=exhausted` 额度耗尽 |
+| `name` | 展示 | 令牌名称 |
+| `created_time` | 时间 | 创建时间 |
+| `accessed_time` | 时间 | 最近访问时间 |
+| `expired_time` | 时间 | 过期时间，`-1` 表示永不过期 |
+| `remain_quota` | 额度计费 | 剩余额度 |
+| `unlimited_quota` | 状态 | 是否无限额度 |
+| `model_limits_enabled` | 状态 | 是否启用模型限制 |
+| `model_limits` | 模型路由 | 允许访问的模型列表/映射，文本存储 |
+| `allow_ips` | 认证安全 | 允许访问的 IP 白名单 |
+| `used_quota` | 额度计费 | 已使用额度 |
+| `group` | 模型路由 | 令牌使用的逻辑分组 |
+| `cross_group_retry` | 状态 | 是否允许 auto 分组跨组重试 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -334,26 +335,32 @@
 
 用途：保存用户 Passkey / WebAuthn 凭证。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 所属用户 ID |
-| `credential_id` | 凭证 ID，通常为 base64 编码 |
-| `public_key` | 公钥数据 |
-| `attestation_type` | 证明类型 |
-| `aaguid` | Authenticator AAGUID |
-| `sign_count` | 签名计数器 |
-| `clone_warning` | 是否出现克隆告警 |
-| `user_present` | 是否验证了用户在场 |
-| `user_verified` | 是否完成用户验证 |
-| `backup_eligible` | 是否支持备份 |
-| `backup_state` | 当前是否处于备份状态 |
-| `transports` | 传输方式列表，文本存储 |
-| `attachment` | 附件类型，如平台型/漫游型 |
-| `last_used_at` | 上次使用时间 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
-| `deleted_at` | 软删除时间 |
+实现备注：
+
+- 这是无密码登录和 Passkey 二次验证的服务端凭证表，不保存私钥，只保存公钥和校验所需元数据。
+- 当前实现中 `user_id` 为唯一索引，因此是“一用户最多一条 Passkey 凭证记录”，不是多设备多凭证模型。
+- 登录时会先根据 `credential_id` 查到所属用户，再把浏览器/系统认证器返回的签名结果与库里的公钥进行校验。
+
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 所属用户 ID |
+| `credential_id` | 认证安全 | 凭证 ID，通常为 base64 编码 |
+| `public_key` | 认证安全 | 公钥数据 |
+| `attestation_type` | 类型 | 证明类型 |
+| `aaguid` | 认证安全 | Authenticator AAGUID |
+| `sign_count` | 认证安全 | 签名计数器 |
+| `clone_warning` | 状态 | 是否出现克隆告警 |
+| `user_present` | 状态 | 是否验证了用户在场 |
+| `user_verified` | 状态 | 是否完成用户验证 |
+| `backup_eligible` | 状态 | 是否支持备份 |
+| `backup_state` | 状态 | 当前是否处于备份状态 |
+| `transports` | 认证安全 | 传输方式列表，文本存储 |
+| `attachment` | 类型 | 附件类型，如平台型/漫游型 |
+| `last_used_at` | 时间 | 上次使用时间 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -361,18 +368,24 @@
 
 用途：保存用户 2FA/TOTP 的启用状态和安全控制信息。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 所属用户 ID，唯一 |
-| `secret` | TOTP 密钥 |
-| `is_enabled` | 是否启用 2FA |
-| `failed_attempts` | 连续失败次数 |
-| `locked_until` | 锁定截止时间 |
-| `last_used_at` | 最近一次成功使用时间 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
-| `deleted_at` | 软删除时间 |
+实现备注：
+
+- 这是用户两步验证的主配置表，核心保存的是 TOTP 密钥、启用状态和失败锁定状态。
+- 两步验证在本项目里通常指“密码作为第一步，认证器动态码或备用恢复码作为第二步”。
+- 该表只保存主配置；真正的应急恢复材料存放在 `two_fa_backup_codes`。
+
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 所属用户 ID，唯一 |
+| `secret` | 认证安全 | TOTP 密钥 |
+| `is_enabled` | 状态 | 是否启用 2FA |
+| `failed_attempts` | 状态 | 连续失败次数 |
+| `locked_until` | 状态 | 锁定截止时间 |
+| `last_used_at` | 时间 | 最近一次成功使用时间 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -380,15 +393,22 @@
 
 用途：保存用户的 2FA 备用恢复码。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 所属用户 ID |
-| `code_hash` | 备用码哈希 |
-| `is_used` | 是否已使用 |
-| `used_at` | 使用时间 |
-| `created_at` | 创建时间 |
-| `deleted_at` | 软删除时间 |
+实现备注：
+
+- 备用恢复码是用户在无法访问认证器 App 时的应急登录材料，例如手机丢失、换机未迁移、认证器数据损坏等场景。
+- 每个备用码只能使用一次，因此需要独立记录 `is_used` 和 `used_at`。
+- 数据库中保存的是 `code_hash` 而不是明文恢复码，作用类似密码哈希，降低泄露风险。
+- 这个表依附 `two_fas` 存在，是 2FA 的兜底恢复机制，而不是独立认证方式。
+
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 所属用户 ID |
+| `code_hash` | 认证安全 | 备用码哈希 |
+| `is_used` | 状态 | 是否已使用 |
+| `used_at` | 时间 | 使用时间 |
+| `created_at` | 时间 | 创建时间 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -398,29 +418,29 @@
 
 表名来源：显式 `TableName()`，固定为 `custom_oauth_providers`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `name` | 提供商显示名称 |
-| `slug` | 路由标识，唯一 |
-| `icon` | 图标标识 |
-| `enabled` | 是否启用 |
-| `client_id` | OAuth Client ID |
-| `client_secret` | OAuth Client Secret |
-| `authorization_endpoint` | 授权地址 |
-| `token_endpoint` | Token 交换地址 |
-| `user_info_endpoint` | 用户信息接口地址 |
-| `scopes` | 授权 scopes |
-| `user_id_field` | 从用户信息响应中提取用户 ID 的字段路径 |
-| `username_field` | 提取用户名的字段路径 |
-| `display_name_field` | 提取显示名的字段路径 |
-| `email_field` | 提取邮箱的字段路径 |
-| `well_known` | OIDC `.well-known` 地址 |
-| `auth_style` | 认证方式配置 |
-| `access_policy` | 用户信息访问策略 JSON |
-| `access_denied_message` | 访问拒绝时的自定义提示 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `name` | 展示 | 提供商显示名称 |
+| `slug` | 标识 | 路由标识，唯一 |
+| `icon` | 展示 | 图标标识 |
+| `enabled` | 状态 | 是否启用 |
+| `client_id` | 认证安全 | OAuth Client ID |
+| `client_secret` | 认证安全 | OAuth Client Secret |
+| `authorization_endpoint` | 认证安全 | 授权地址 |
+| `token_endpoint` | 认证安全 | Token 交换地址 |
+| `user_info_endpoint` | 认证安全 | 用户信息接口地址 |
+| `scopes` | 认证安全 | 授权 scopes |
+| `user_id_field` | 认证安全 | 从用户信息响应中提取用户 ID 的字段路径 |
+| `username_field` | 认证安全 | 提取用户名的字段路径 |
+| `display_name_field` | 认证安全 | 提取显示名的字段路径 |
+| `email_field` | 认证安全 | 提取邮箱的字段路径 |
+| `well_known` | 认证安全 | OIDC `.well-known` 地址 |
+| `auth_style` | 类型 | 认证方式配置。可选值：`0=auto` 自动选择，`1=params` 使用请求参数传递认证信息，`2=header` 使用请求头 Basic Auth |
+| `access_policy` | 认证安全 | 用户信息访问策略 JSON |
+| `access_denied_message` | 内容 | 访问拒绝时的自定义提示 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
 
 ---
 
@@ -430,13 +450,13 @@
 
 表名来源：显式 `TableName()`，固定为 `user_oauth_bindings`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 平台用户 ID |
-| `provider_id` | 自定义 OAuth 提供商 ID |
-| `provider_user_id` | 上游 OAuth 提供商返回的用户唯一标识 |
-| `created_at` | 创建时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 平台用户 ID |
+| `provider_id` | 关联 | 自定义 OAuth 提供商 ID |
+| `provider_user_id` | 认证安全 | 上游 OAuth 提供商返回的用户唯一标识 |
+| `created_at` | 时间 | 创建时间 |
 
 ---
 
@@ -444,10 +464,10 @@
 
 用途：运行时系统配置中心，保存动态配置项。
 
-| 字段名 | 用途 |
-|---|---|
-| `key` | 配置键，主键 |
-| `value` | 配置值，文本形式保存 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `key` | 配置 | 配置键，主键 |
+| `value` | 配置 | 配置值，文本形式保存 |
 
 ---
 
@@ -455,11 +475,11 @@
 
 用途：记录系统是否已经完成初始化。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `version` | 初始化时的系统版本 |
-| `initialized_at` | 初始化时间戳 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `version` | 追踪审计 | 初始化时的系统版本 |
+| `initialized_at` | 时间 | 初始化时间戳 |
 
 ---
 
@@ -469,13 +489,13 @@
 
 表名来源：显式 `TableName()`，固定为 `checkins`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 用户 ID |
-| `checkin_date` | 签到日期，格式 `YYYY-MM-DD` |
-| `quota_awarded` | 本次签到奖励额度 |
-| `created_at` | 创建时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 用户 ID |
+| `checkin_date` | 时间 | 签到日期，格式 `YYYY-MM-DD` |
+| `quota_awarded` | 额度计费 | 本次签到奖励额度 |
+| `created_at` | 时间 | 创建时间 |
 
 ---
 
@@ -483,19 +503,19 @@
 
 用途：兑换码/充值码，供用户兑换额度。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 创建者或关联用户 ID |
-| `key` | 兑换码字符串，唯一 |
-| `status` | 状态 |
-| `name` | 兑换码名称 |
-| `quota` | 可兑换额度 |
-| `created_time` | 创建时间 |
-| `redeemed_time` | 被兑换时间 |
-| `used_user_id` | 实际使用该兑换码的用户 ID |
-| `deleted_at` | 软删除时间 |
-| `expired_time` | 过期时间，`0` 表示不过期 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 创建者或关联用户 ID |
+| `key` | 凭证 | 兑换码字符串，唯一 |
+| `status` | 状态 | 状态。可选值：`1=enabled` 可使用，`2=disabled` 已禁用，`3=used` 已被兑换 |
+| `name` | 展示 | 兑换码名称 |
+| `quota` | 额度计费 | 可兑换额度 |
+| `created_time` | 时间 | 创建时间 |
+| `redeemed_time` | 时间 | 被兑换时间 |
+| `used_user_id` | 关联 | 实际使用该兑换码的用户 ID |
+| `deleted_at` | 时间 | 软删除时间 |
+| `expired_time` | 时间 | 过期时间，`0` 表示不过期 |
 
 说明：`count` 字段带 `gorm:"-:all"`，不落库。
 
@@ -507,18 +527,18 @@
 
 表名按 GORM 默认规则推断为 `top_ups`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 充值用户 ID |
-| `amount` | 充值的额度数量 |
-| `money` | 支付金额 |
-| `trade_no` | 支付平台订单号，唯一 |
-| `payment_method` | 支付方式 |
-| `payment_provider` | 支付提供商 |
-| `create_time` | 创建时间 |
-| `complete_time` | 完成时间 |
-| `status` | 订单状态 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 充值用户 ID |
+| `amount` | 额度计费 | 充值的额度数量 |
+| `money` | 额度计费 | 支付金额 |
+| `trade_no` | 标识 | 支付平台订单号，唯一 |
+| `payment_method` | 类型 | 支付方式。当前代码中定义了 `stripe`、`creem`、`waffo`、`waffo_pancake`、`balance` |
+| `payment_provider` | 类型 | 支付提供商。当前代码中定义了 `epay`、`stripe`、`creem`、`waffo`、`waffo_pancake`、`balance` |
+| `create_time` | 时间 | 创建时间 |
+| `complete_time` | 时间 | 完成时间 |
+| `status` | 状态 | 订单状态。可选值：`pending` 待支付/待回调，`success` 已成功，`failed` 失败，`expired` 已过期 |
 
 ---
 
@@ -526,38 +546,38 @@
 
 用途：上游渠道配置主表，系统所有上游接入都从这里定义。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 渠道主键 |
-| `type` | 渠道类型，如 OpenAI、Claude、Gemini、Azure 等 |
-| `key` | 上游 API Key 或其集合 |
-| `openai_organization` | OpenAI Organization |
-| `test_model` | 渠道测试模型 |
-| `status` | 渠道状态 |
-| `name` | 渠道名称 |
-| `weight` | 同优先级下的权重 |
-| `created_time` | 创建时间 |
-| `test_time` | 最近测试时间 |
-| `response_time` | 响应时间统计 |
-| `base_url` | 上游基础地址 |
-| `other` | 其他补充信息 |
-| `balance` | 渠道余额 |
-| `balance_updated_time` | 余额更新时间 |
-| `models` | 渠道支持的模型列表，逗号分隔 |
-| `group` | 渠道所属分组列表 |
-| `used_quota` | 渠道累计消耗额度 |
-| `model_mapping` | 模型映射配置 |
-| `status_code_mapping` | 状态码映射配置 |
-| `priority` | 渠道优先级 |
-| `auto_ban` | 是否自动封禁异常渠道 |
-| `other_info` | 其他详细信息 |
-| `tag` | 渠道标签 |
-| `setting` | 渠道额外设置 |
-| `param_override` | 请求参数覆盖配置 |
-| `header_override` | 请求头覆盖配置 |
-| `remark` | 备注 |
-| `channel_info` | 多 Key 等运行时结构的 JSON |
-| `settings` | 其他设置 JSON，常放 Azure 版本等非检索信息 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 渠道主键 |
+| `type` | 类型 | 渠道类型。当前代码中定义了大量枚举值，例如 `1=OpenAI`、`3=Azure`、`14=Anthropic`、`24=Gemini`、`33=AWS`、`48=xAI`、`55=Sora`、`57=Codex` 等，完整映射见 `constant/channel.go` 的 `ChannelTypeNames` |
+| `key` | 凭证 | 上游 API Key 或其集合 |
+| `openai_organization` | 模型路由 | OpenAI Organization |
+| `test_model` | 模型路由 | 渠道测试模型 |
+| `status` | 状态 | 渠道状态。可选值：`0=unknown` 未知，`1=enabled` 启用，`2=manually_disabled` 手动禁用，`3=auto_disabled` 自动禁用 |
+| `name` | 展示 | 渠道名称 |
+| `weight` | 模型路由 | 同优先级下的权重 |
+| `created_time` | 时间 | 创建时间 |
+| `test_time` | 时间 | 最近测试时间 |
+| `response_time` | 统计 | 响应时间统计 |
+| `base_url` | 模型路由 | 上游基础地址 |
+| `other` | 配置 | 其他补充信息 |
+| `balance` | 额度计费 | 渠道余额 |
+| `balance_updated_time` | 时间 | 余额更新时间 |
+| `models` | 模型路由 | 渠道支持的模型列表，逗号分隔 |
+| `group` | 模型路由 | 渠道所属分组列表 |
+| `used_quota` | 额度计费 | 渠道累计消耗额度 |
+| `model_mapping` | 模型路由 | 模型映射配置 |
+| `status_code_mapping` | 类型 | 状态码映射配置 |
+| `priority` | 模型路由 | 渠道优先级 |
+| `auto_ban` | 状态 | 是否自动封禁异常渠道 |
+| `other_info` | 配置 | 其他详细信息 |
+| `tag` | 模型路由 | 渠道标签 |
+| `setting` | 配置 | 渠道额外设置 |
+| `param_override` | 模型路由 | 请求参数覆盖配置 |
+| `header_override` | 模型路由 | 请求头覆盖配置 |
+| `remark` | 展示 | 备注 |
+| `channel_info` | 模型路由 | 多 Key 等运行时结构的 JSON |
+| `settings` | 配置 | 其他设置 JSON，常放 Azure 版本等非检索信息 |
 
 ### `channel_info` JSON 内部结构
 
@@ -569,7 +589,7 @@
 | `multi_key_disabled_reason` | 每个 Key 的禁用原因 |
 | `multi_key_disabled_time` | 每个 Key 的禁用时间 |
 | `multi_key_polling_index` | 轮询模式下当前索引 |
-| `multi_key_mode` | 多 Key 使用模式，如随机/轮询 |
+| `multi_key_mode` | 多 Key 使用模式。可选值：`random` 随机选择可用 Key，`polling` 按轮询顺序选择可用 Key |
 
 说明：`keys` 字段带 `gorm:"-"`，不落库。
 
@@ -579,15 +599,15 @@
 
 用途：渠道能力展开表，把 “渠道支持哪些模型、属于哪些分组” 预展开成索引。
 
-| 字段名 | 用途 |
-|---|---|
-| `group` | 分组名，联合主键的一部分 |
-| `model` | 模型名，联合主键的一部分 |
-| `channel_id` | 渠道 ID，联合主键的一部分 |
-| `enabled` | 该能力是否启用 |
-| `priority` | 该能力的优先级 |
-| `weight` | 同优先级内权重 |
-| `tag` | 标签 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `group` | 模型路由 | 分组名，联合主键的一部分 |
+| `model` | 模型路由 | 模型名，联合主键的一部分 |
+| `channel_id` | 关联 | 渠道 ID，联合主键的一部分 |
+| `enabled` | 状态 | 该能力是否启用 |
+| `priority` | 模型路由 | 该能力的优先级 |
+| `weight` | 模型路由 | 同优先级内权重 |
+| `tag` | 模型路由 | 标签 |
 
 ---
 
@@ -595,21 +615,21 @@
 
 用途：平台展示和管理用的模型元数据表，不等于上游原始模型列表。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `model_name` | 模型名称，唯一（配合软删除） |
-| `description` | 模型描述 |
-| `icon` | 图标 |
-| `tags` | 模型标签 |
-| `vendor_id` | 所属供应商 ID |
-| `endpoints` | 端点配置 |
-| `status` | 状态 |
-| `sync_official` | 是否参与官方模型同步 |
-| `created_time` | 创建时间 |
-| `updated_time` | 更新时间 |
-| `deleted_at` | 软删除时间 |
-| `name_rule` | 模型名匹配规则 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `model_name` | 模型路由 | 模型名称，唯一（配合软删除） |
+| `description` | 展示 | 模型描述 |
+| `icon` | 展示 | 图标 |
+| `tags` | 模型路由 | 模型标签 |
+| `vendor_id` | 关联 | 所属供应商 ID |
+| `endpoints` | 模型路由 | 端点配置 |
+| `status` | 状态 | 状态。当前前后端都按 `1=enabled` 启用、`0=disabled` 禁用使用 |
+| `sync_official` | 状态 | 是否参与官方模型同步。当前前后端都按 `1=yes` 参与官方同步、`0=no` 不参与 |
+| `created_time` | 时间 | 创建时间 |
+| `updated_time` | 时间 | 更新时间 |
+| `deleted_at` | 时间 | 软删除时间 |
+| `name_rule` | 模型路由 | 模型名匹配规则。可选值：`0=exact` 精确匹配，`1=prefix` 前缀匹配，`2=contains` 包含匹配，`3=suffix` 后缀匹配 |
 
 说明：`bound_channels`、`enable_groups`、`quota_types`、`matched_models`、`matched_count` 都不落库。
 
@@ -619,16 +639,16 @@
 
 用途：模型供应商元数据，供 `models.vendor_id` 引用。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `name` | 供应商名称 |
-| `description` | 描述 |
-| `icon` | 图标 |
-| `status` | 状态 |
-| `created_time` | 创建时间 |
-| `updated_time` | 更新时间 |
-| `deleted_at` | 软删除时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `name` | 展示 | 供应商名称 |
+| `description` | 展示 | 描述 |
+| `icon` | 展示 | 图标 |
+| `status` | 状态 | 状态。当前代码中按 `1=enabled` 启用使用，其他值暂未见明确扩展 |
+| `created_time` | 时间 | 创建时间 |
+| `updated_time` | 时间 | 更新时间 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -636,16 +656,16 @@
 
 用途：前端可复用的预填分组，如模型组、标签组、端点组。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `name` | 分组名称 |
-| `type` | 分组类型，如 `model`、`tag`、`endpoint` |
-| `items` | JSON 数组，保存分组条目 |
-| `description` | 描述 |
-| `created_time` | 创建时间 |
-| `updated_time` | 更新时间 |
-| `deleted_at` | 软删除时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `name` | 展示 | 分组名称 |
+| `type` | 类型 | 分组类型。当前代码注释和前端类型定义中的可选值为 `model` 模型组、`tag` 标签组、`endpoint` 端点组 |
+| `items` | 配置 | JSON 数组，保存分组条目 |
+| `description` | 展示 | 描述 |
+| `created_time` | 时间 | 创建时间 |
+| `updated_time` | 时间 | 更新时间 |
+| `deleted_at` | 时间 | 软删除时间 |
 
 ---
 
@@ -653,29 +673,29 @@
 
 用途：记录用户请求消费、令牌消耗、渠道调用等日志信息。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 日志主键 |
-| `user_id` | 用户 ID |
-| `created_at` | 创建时间 |
-| `type` | 日志类型 |
-| `content` | 日志内容 |
-| `username` | 用户名快照 |
-| `token_name` | 令牌名称快照 |
-| `model_name` | 模型名 |
-| `quota` | 本次消耗额度 |
-| `prompt_tokens` | prompt token 数 |
-| `completion_tokens` | completion token 数 |
-| `use_time` | 耗时 |
-| `is_stream` | 是否流式 |
-| `channel` | 渠道 ID |
-| `channel_name` | 渠道名称，只读查询字段 |
-| `token_id` | 令牌 ID |
-| `group` | 使用分组 |
-| `ip` | 调用 IP |
-| `request_id` | 平台请求 ID |
-| `upstream_request_id` | 上游请求 ID |
-| `other` | 额外 JSON/文本信息 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 日志主键 |
+| `user_id` | 关联 | 用户 ID |
+| `created_at` | 时间 | 创建时间 |
+| `type` | 类型 | 日志类型。可选值：`0=unknown` 未知，`1=topup` 充值，`2=consume` 消费，`3=manage` 管理操作，`4=system` 系统事件，`5=error` 错误，`6=refund` 退款 |
+| `content` | 内容 | 日志内容 |
+| `username` | 展示 | 用户名快照 |
+| `token_name` | 展示 | 令牌名称快照 |
+| `model_name` | 模型路由 | 模型名 |
+| `quota` | 额度计费 | 本次消耗额度 |
+| `prompt_tokens` | 统计 | prompt token 数 |
+| `completion_tokens` | 统计 | completion token 数 |
+| `use_time` | 统计 | 耗时 |
+| `is_stream` | 状态 | 是否流式 |
+| `channel` | 关联 | 渠道 ID |
+| `channel_name` | 模型路由 | 渠道名称，只读查询字段 |
+| `token_id` | 关联 | 令牌 ID |
+| `group` | 模型路由 | 使用分组 |
+| `ip` | 追踪审计 | 调用 IP |
+| `request_id` | 追踪审计 | 平台请求 ID |
+| `upstream_request_id` | 追踪审计 | 上游请求 ID |
+| `other` | 内容 | 额外 JSON/文本信息 |
 
 说明：`channel_name` 带 `gorm:"->"`，主要作为只读查询字段使用。
 
@@ -687,16 +707,16 @@
 
 表名来自代码中的显式 `DB.Table("quota_data")` 使用。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 用户 ID |
-| `username` | 用户名快照 |
-| `model_name` | 模型名 |
-| `created_at` | 聚合时间桶，通常按小时截断 |
-| `token_used` | 使用 token 总数 |
-| `count` | 请求次数 |
-| `quota` | 消耗额度总量 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 用户 ID |
+| `username` | 展示 | 用户名快照 |
+| `model_name` | 模型路由 | 模型名 |
+| `created_at` | 时间 | 聚合时间桶，通常按小时截断 |
+| `token_used` | 统计 | 使用 token 总数 |
+| `count` | 统计 | 请求次数 |
+| `quota` | 额度计费 | 消耗额度总量 |
 
 ---
 
@@ -704,27 +724,27 @@
 
 用途：通用异步任务表，用于视频、音乐、Suno 等长生命周期任务。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 数据库主键，主要给内部更新、批量修复和 CAS 状态推进使用 |
-| `created_at` | 记录创建时间，属于通用审计字段 |
-| `updated_at` | 记录最近更新时间，属于通用审计字段 |
-| `task_id` | 对外公开的任务 ID，不等于上游真实任务 ID；给用户查询、任务列表和统一 API 返回使用 |
-| `platform` | 任务平台类型，用于轮询器按平台分发到对应 `TaskAdaptor` |
-| `user_id` | 任务归属用户 ID，用于权限校验、用户任务列表和账单关联 |
-| `group` | 提交时所在分组，主要用于异步计费重算，避免用户后续改组导致账单漂移 |
-| `channel_id` | 实际使用的渠道 ID，用于轮询、结果代理、原任务续作和审计 |
-| `quota` | 该任务最终或当前记录的额度，用于异步结算、差额补扣和退款 |
-| `action` | 任务动作类型，如文生视频、图生视频、remix 等；轮询和续作时会继续使用 |
-| `status` | 当前任务状态，是查询接口、轮询推进、结算和代理校验的核心字段 |
-| `fail_reason` | 任务失败原因，供用户展示、日志记录和退款原因说明使用 |
-| `submit_time` | 提交时间，用于列表筛选、审计和超时判断 |
-| `start_time` | 任务真正开始执行的时间，通常在轮询到进行中时写入 |
-| `finish_time` | 任务结束时间，通常在轮询到成功或失败时写入 |
-| `progress` | 任务进度展示字段，也用于筛选未完成任务 |
-| `properties` | 任务基础属性 JSON，保存模型名、输入摘要等较稳定的业务上下文 |
-| `private_data` | 内部私有 JSON，保存上游真实任务 ID、结果地址、计费来源和计费快照等敏感上下文 |
-| `data` | 任务原始响应或脱敏后的响应 JSON，供详情返回、格式转换和兼容逻辑使用 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 数据库主键，主要给内部更新、批量修复和 CAS 状态推进使用 |
+| `created_at` | 时间 | 记录创建时间，属于通用审计字段 |
+| `updated_at` | 时间 | 记录最近更新时间，属于通用审计字段 |
+| `task_id` | 标识 | 对外公开的任务 ID，不等于上游真实任务 ID；给用户查询、任务列表和统一 API 返回使用 |
+| `platform` | 类型 | 任务平台类型，用于轮询器按平台分发到对应 `TaskAdaptor`。当前代码里定义了 `suno` 和 `mj` |
+| `user_id` | 关联 | 任务归属用户 ID，用于权限校验、用户任务列表和账单关联 |
+| `group` | 模型路由 | 提交时所在分组，主要用于异步计费重算，避免用户后续改组导致账单漂移 |
+| `channel_id` | 关联 | 实际使用的渠道 ID，用于轮询、结果代理、原任务续作和审计 |
+| `quota` | 额度计费 | 该任务最终或当前记录的额度，用于异步结算、差额补扣和退款 |
+| `action` | 类型 | 任务动作类型。当前代码里定义了 `MUSIC`、`LYRICS`、`generate`、`textGenerate`、`firstTailGenerate`、`referenceGenerate`、`remixGenerate` 等 |
+| `status` | 状态 | 当前任务状态，是查询接口、轮询推进、结算和代理校验的核心字段。可选值：`NOT_START` 未开始，`SUBMITTED` 已提交，`QUEUED` 排队中，`IN_PROGRESS` 执行中，`FAILURE` 失败，`SUCCESS` 成功，`UNKNOWN` 未知 |
+| `fail_reason` | 内容 | 任务失败原因，供用户展示、日志记录和退款原因说明使用 |
+| `submit_time` | 时间 | 提交时间，用于列表筛选、审计和超时判断 |
+| `start_time` | 时间 | 任务真正开始执行的时间，通常在轮询到进行中时写入 |
+| `finish_time` | 时间 | 任务结束时间，通常在轮询到成功或失败时写入 |
+| `progress` | 状态 | 任务进度展示字段，也用于筛选未完成任务 |
+| `properties` | 内容 | 任务基础属性 JSON，保存模型名、输入摘要等较稳定的业务上下文 |
+| `private_data` | 内容 | 内部私有 JSON，保存上游真实任务 ID、结果地址、计费来源和计费快照等敏感上下文 |
+| `data` | 内容 | 任务原始响应或脱敏后的响应 JSON，供详情返回、格式转换和兼容逻辑使用 |
 
 ### 这张表为什么不能只做纯转发
 
@@ -811,7 +831,7 @@
 | `key` | 某些平台需要保存提交时使用的上游密钥，供后续轮询或结果代理继续使用 |
 | `upstream_task_id` | 上游真实任务 ID；本地公开 `task_id` 与之解耦，避免直接暴露 provider 侧 ID |
 | `result_url` | 任务成功后的最终结果 URL；视频代理和任务详情都会读取 |
-| `billing_source` | 计费来源，如 `wallet` 或 `subscription`，用于异步退款和结算 |
+| `billing_source` | 计费来源。当前代码里使用了 `wallet` 钱包额度、`subscription` 订阅额度；用于异步退款和结算 |
 | `subscription_id` | 订阅实例 ID，用于任务完成后回写订阅额度 |
 | `token_id` | 平台令牌 ID，用于令牌维度日志和退款关联 |
 | `billing_context` | 计费上下文快照，用于任务完成后的重算、补扣或退款 |
@@ -882,30 +902,30 @@
 
 用途：Midjourney 专用任务表。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `code` | 业务状态码 |
-| `user_id` | 用户 ID |
-| `action` | Midjourney 动作类型 |
-| `mj_id` | Midjourney 任务 ID |
-| `prompt` | 原始提示词 |
-| `prompt_en` | 英文提示词 |
-| `description` | 描述 |
-| `state` | 原始状态文本 |
-| `submit_time` | 提交时间 |
-| `start_time` | 开始时间 |
-| `finish_time` | 完成时间 |
-| `image_url` | 图片结果地址 |
-| `video_url` | 视频结果地址 |
-| `video_urls` | 多视频结果地址 |
-| `status` | 状态 |
-| `progress` | 进度 |
-| `fail_reason` | 失败原因 |
-| `channel_id` | 渠道 ID |
-| `quota` | 消耗额度 |
-| `buttons` | 可执行按钮/操作信息 |
-| `properties` | 扩展属性 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `code` | 标识 | 业务状态码 |
+| `user_id` | 关联 | 用户 ID |
+| `action` | 类型 | Midjourney 动作类型。当前代码里定义了 `IMAGINE`、`DESCRIBE`、`BLEND`、`UPSCALE`、`VARIATION`、`REROLL`、`INPAINT`、`MODAL`、`ZOOM`、`CUSTOM_ZOOM`、`SHORTEN`、`HIGH_VARIATION`、`LOW_VARIATION`、`PAN`、`SWAP_FACE`、`UPLOAD`、`VIDEO`、`EDITS` |
+| `mj_id` | 标识 | Midjourney 任务 ID |
+| `prompt` | 内容 | 原始提示词 |
+| `prompt_en` | 内容 | 英文提示词 |
+| `description` | 展示 | 描述 |
+| `state` | 内容 | 原始状态文本 |
+| `submit_time` | 时间 | 提交时间 |
+| `start_time` | 时间 | 开始时间 |
+| `finish_time` | 时间 | 完成时间 |
+| `image_url` | 内容 | 图片结果地址 |
+| `video_url` | 内容 | 视频结果地址 |
+| `video_urls` | 内容 | 多视频结果地址 |
+| `status` | 状态 | 状态 |
+| `progress` | 状态 | 进度 |
+| `fail_reason` | 内容 | 失败原因 |
+| `channel_id` | 关联 | 渠道 ID |
+| `quota` | 额度计费 | 消耗额度 |
+| `buttons` | 内容 | 可执行按钮/操作信息 |
+| `properties` | 内容 | 扩展属性 |
 
 ---
 
@@ -915,19 +935,19 @@
 
 表名来源：显式 `TableName()`，固定为 `perf_metrics`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `model_name` | 模型名 |
-| `group` | 分组 |
-| `bucket_ts` | 时间桶时间戳 |
-| `request_count` | 请求总数 |
-| `success_count` | 成功请求数 |
-| `total_latency_ms` | 总耗时 |
-| `ttft_sum_ms` | 首 token 时间总和 |
-| `ttft_count` | 首 token 时间样本数 |
-| `output_tokens` | 输出 token 总量 |
-| `generation_ms` | 生成阶段总耗时 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `model_name` | 模型路由 | 模型名 |
+| `group` | 模型路由 | 分组 |
+| `bucket_ts` | 时间 | 时间桶时间戳 |
+| `request_count` | 统计 | 请求总数 |
+| `success_count` | 统计 | 成功请求数 |
+| `total_latency_ms` | 统计 | 总耗时 |
+| `ttft_sum_ms` | 统计 | 首 token 时间总和 |
+| `ttft_count` | 统计 | 首 token 时间样本数 |
+| `output_tokens` | 统计 | 输出 token 总量 |
+| `generation_ms` | 统计 | 生成阶段总耗时 |
 
 ---
 
@@ -937,29 +957,29 @@
 
 说明：SQLite 下有专门的兼容迁移逻辑，但逻辑表名仍为 `subscription_plans`。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `title` | 套餐标题 |
-| `subtitle` | 套餐副标题 |
-| `price_amount` | 套餐金额 |
-| `currency` | 币种 |
-| `duration_unit` | 时长单位，如 month |
-| `duration_value` | 时长数值 |
-| `custom_seconds` | 自定义时长秒数 |
-| `enabled` | 是否启用 |
-| `sort_order` | 排序 |
-| `allow_balance_pay` | 是否允许余额支付 |
-| `stripe_price_id` | Stripe 价格 ID |
-| `creem_product_id` | Creem 产品 ID |
-| `waffo_pancake_product_id` | Waffo Pancake 产品 ID |
-| `max_purchase_per_user` | 单用户最大购买次数 |
-| `upgrade_group` | 购买后升级到的用户分组 |
-| `total_amount` | 套餐总额度 |
-| `quota_reset_period` | 套餐额度重置周期 |
-| `quota_reset_custom_seconds` | 自定义重置秒数 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `title` | 展示 | 套餐标题 |
+| `subtitle` | 展示 | 套餐副标题 |
+| `price_amount` | 额度计费 | 套餐金额 |
+| `currency` | 额度计费 | 币种 |
+| `duration_unit` | 类型 | 时长单位。可选值：`year` 年，`month` 月，`day` 天，`hour` 小时，`custom` 自定义秒数 |
+| `duration_value` | 配置 | 时长数值 |
+| `custom_seconds` | 配置 | 自定义时长秒数 |
+| `enabled` | 状态 | 是否启用 |
+| `sort_order` | 展示 | 排序 |
+| `allow_balance_pay` | 状态 | 是否允许余额支付 |
+| `stripe_price_id` | 额度计费 | Stripe 价格 ID |
+| `creem_product_id` | 额度计费 | Creem 产品 ID |
+| `waffo_pancake_product_id` | 额度计费 | Waffo Pancake 产品 ID |
+| `max_purchase_per_user` | 额度计费 | 单用户最大购买次数 |
+| `upgrade_group` | 额度计费 | 购买后升级到的用户分组 |
+| `total_amount` | 额度计费 | 套餐总额度 |
+| `quota_reset_period` | 额度计费 | 套餐额度重置周期。可选值：`never` 不重置，`daily` 每日，`weekly` 每周，`monthly` 每月，`custom` 自定义秒数 |
+| `quota_reset_custom_seconds` | 额度计费 | 自定义重置秒数 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
 
 ---
 
@@ -967,19 +987,19 @@
 
 用途：订阅购买订单。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 用户 ID |
-| `plan_id` | 套餐 ID |
-| `money` | 实付金额 |
-| `trade_no` | 订单号/支付单号 |
-| `payment_method` | 支付方式 |
-| `payment_provider` | 支付提供商 |
-| `status` | 订单状态 |
-| `create_time` | 创建时间 |
-| `complete_time` | 完成时间 |
-| `provider_payload` | 支付提供商原始回执或补充数据 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 用户 ID |
+| `plan_id` | 关联 | 套餐 ID |
+| `money` | 额度计费 | 实付金额 |
+| `trade_no` | 标识 | 订单号/支付单号 |
+| `payment_method` | 类型 | 支付方式。沿用充值单定义，当前代码中定义了 `stripe`、`creem`、`waffo`、`waffo_pancake`、`balance` |
+| `payment_provider` | 类型 | 支付提供商。当前代码中定义了 `epay`、`stripe`、`creem`、`waffo`、`waffo_pancake`、`balance` |
+| `status` | 状态 | 订单状态。沿用充值单状态：`pending` 待支付/待回调，`success` 已成功，`failed` 失败，`expired` 已过期 |
+| `create_time` | 时间 | 创建时间 |
+| `complete_time` | 时间 | 完成时间 |
+| `provider_payload` | 内容 | 支付提供商原始回执或补充数据 |
 
 ---
 
@@ -987,23 +1007,23 @@
 
 用途：用户实际生效中的订阅实例，不同于套餐模板。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `user_id` | 用户 ID |
-| `plan_id` | 套餐 ID |
-| `amount_total` | 订阅总额度 |
-| `amount_used` | 已使用额度 |
-| `start_time` | 生效开始时间 |
-| `end_time` | 生效结束时间 |
-| `status` | 订阅状态，如 active/expired/cancelled |
-| `source` | 来源，如 order/admin |
-| `last_reset_time` | 上次重置时间 |
-| `next_reset_time` | 下次重置时间 |
-| `upgrade_group` | 订阅带来的分组升级 |
-| `prev_user_group` | 升级前原分组 |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `user_id` | 关联 | 用户 ID |
+| `plan_id` | 关联 | 套餐 ID |
+| `amount_total` | 额度计费 | 订阅总额度 |
+| `amount_used` | 额度计费 | 已使用额度 |
+| `start_time` | 时间 | 生效开始时间 |
+| `end_time` | 时间 | 生效结束时间 |
+| `status` | 状态 | 订阅状态。当前代码里使用了 `active` 生效中、`expired` 已过期、`cancelled` 已取消 |
+| `source` | 类型 | 来源。当前代码里使用了 `order` 订单创建、`admin` 管理员直接发放 |
+| `last_reset_time` | 时间 | 上次重置时间 |
+| `next_reset_time` | 时间 | 下次重置时间 |
+| `upgrade_group` | 额度计费 | 订阅带来的分组升级 |
+| `prev_user_group` | 追踪审计 | 升级前原分组 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
 
 ---
 
@@ -1011,16 +1031,16 @@
 
 用途：记录订阅额度的预扣状态，支持请求失败退款和幂等控制。
 
-| 字段名 | 用途 |
-|---|---|
-| `id` | 主键 |
-| `request_id` | 请求 ID，唯一，用于幂等 |
-| `user_id` | 用户 ID |
-| `user_subscription_id` | 用户订阅实例 ID |
-| `pre_consumed` | 预扣额度 |
-| `status` | 状态，如 consumed/refunded |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
+| 字段名 | 分组 | 用途 |
+|---|---|---|
+| `id` | 标识 | 主键 |
+| `request_id` | 追踪审计 | 请求 ID，唯一，用于幂等 |
+| `user_id` | 关联 | 用户 ID |
+| `user_subscription_id` | 关联 | 用户订阅实例 ID |
+| `pre_consumed` | 额度计费 | 预扣额度 |
+| `status` | 状态 | 状态。当前代码里使用了 `consumed` 已预扣、`refunded` 已退回 |
+| `created_at` | 时间 | 创建时间 |
+| `updated_at` | 时间 | 更新时间 |
 
 ---
 

@@ -196,6 +196,13 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
 
 > `relay` 调上游时，本质上总是依赖“预先配置在 channel 中的凭证材料”；但这些材料不一定是狭义 API key，也可能是 OAuth token、service account、`client_id|client_secret`，或本地签名所需密钥。
 
+这里要特别区分两类经常被混称为 “OAuth” 的东西：
+
+- 用户登录 OAuth：让 GitHub、Discord、OIDC、LinuxDO 等外部网站账号登录本项目控制台
+- 渠道接入 OAuth：让本项目作为 client 去上游平台换取调用模型接口所需的 token
+
+本节只讨论第二类，也就是 channel / relay 侧的 OAuth，与平台用户登录态没有直接关系。
+
 ### 4.1 最常见模式：静态 API Key 直传
 
 常见例子：
@@ -222,6 +229,8 @@ channel `key` 实际保存的是 JSON，里面会有：
 
 这里 relay 主链路不是每次都重新做 OAuth 登录，而是消费已经存下来的 token。
 
+这类 token 的用途不是“证明某个用户登录了本项目”，而是“证明当前 channel 有权调用该上游平台接口”。
+
 ### 4.3 预配置原始凭证，动态向上游换临时 access token
 
 典型有：
@@ -243,6 +252,8 @@ client_id|client_secret
 ```
 
 先换 `access_token`，再带 token 调模型接口。
+
+因此从渠道语义上看，这一类虽然也用了 OAuth token endpoint，但项目本地长期保存的往往不是最终 `access_token`，而是能换取它的原始凭证材料。
 
 ### 4.4 预配置原始密钥，本地签名后调用
 
