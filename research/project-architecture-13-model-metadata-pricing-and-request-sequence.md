@@ -22,6 +22,10 @@
 
 - `research/project-architecture-14-model-list-and-pricing-interfaces.md`
 
+如果你更关心的是“代码里哪些模型名直接写死在常量和默认表里”，可以继续看：
+
+- `research/project-architecture-16-built-in-model-constants.md`
+
 如果你更关心的是运行时 `group + model -> channel` 的选路行为，可以同时看：
 
 - `research/project-architecture-05-channel-routing.md`

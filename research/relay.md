@@ -525,6 +525,10 @@ OpenAI 风格客户端入口
 5. 调上游时总是依赖 channel 中预先配置的凭证材料，但这些材料既可能是静态 key，也可能是 OAuth token、动态换取 token 的原始凭证，或本地签名密钥。
 6. `codex` 不是普通 `openai` channel 的模型别名，而是复用 OpenAI Responses 风格输入输出、但连接 ChatGPT/Codex 后台接口的一类独立 channel。
 
+补充阅读：
+
+- 上游错误表达与项目内归一化速查，见 [relay-provider-error-shapes.md](./relay-provider-error-shapes.md)
+
 ## 关键参考文件
 
 - `controller/relay.go`
