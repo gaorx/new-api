@@ -218,6 +218,55 @@ Gemini 上游响应 -> OpenAI 响应 -> Claude 客户端响应
   -> 对外大多直接发送原 chunk
 ```
 
+### 2.6 流式请求的 usage 不是只靠一种来源
+
+如果问题是：
+
+> `/v1/chat/completions` 这类 stream relay，最终 usage 是上游最后统一给，还是项目自己逐 chunk 累加出来？
+
+最准确的结论是：
+
+> 项目优先使用上游提供的 usage；如果上游在流末尾给总 usage，就直接取最终 usage；如果上游在流过程中分 chunk 提供 usage，就边读边更新；只有上游不给 usage，才会在流结束后基于累计文本做本地兜底估算。
+
+可以分成三种常见情况：
+
+1. 上游在最后一个 chunk 或倒数几个 chunk 中给出总 usage  
+   这是最理想的情况。项目会直接取这份 usage，而不是自己重新累加。
+
+2. 上游在多个 chunk 中持续携带 usage 信息  
+   这种情况下 relay 会一边读 chunk，一边用上游报告的 usage 更新当前统计。  
+   这本质上仍然是“信任上游 usage 字段”，不是项目自己按 token 文本逐块精确累计。
+
+3. 上游流里完全不给 usage  
+   这时项目才会走本地兜底：
+   - 累积输出文本
+   - 用预估 prompt tokens
+   - 在流结束后调用 token 计数逻辑推算 completion tokens
+   - 某些工具调用场景再做少量额外补偿
+
+按 provider 看，典型表现是：
+
+- OpenAI / OpenAI-compatible stream  
+  优先尝试从最后一个或倒数第二个 SSE chunk 中提取 usage；拿不到时再根据累计文本估算。
+
+- Claude stream  
+  如果 Anthropic 的流式事件里携带 `usage`，项目会持续刷新 `claudeInfo.Usage`；若最终拿不到完整 usage，再用累计文本兜底。
+
+- Gemini stream  
+  如果 chunk 里出现 `UsageMetadata.TotalTokenCount`，项目会直接更新 usage；如果一直没有 usage metadata，再根据累计文本和预估 prompt tokens 兜底。
+
+所以更准确的一句话不是：
+
+- “stream usage 一定要自己逐 chunk 累加”
+
+也不是：
+
+- “stream usage 一定只看最后一个 chunk”
+
+而是：
+
+> relay 的策略是“优先信任上游 usage，其次本地补算”；上游可能在流末尾给 usage，也可能在中途多个 chunk 中逐步给出 usage。
+
 会让同协议流也进入逐 chunk 改写的典型开关有：
 
 - `force_format`
@@ -360,7 +409,162 @@ channel 中保存的是类似 `id.secret` 的原始密钥材料，请求前会�
 
 不是“每次转发时现场申请一个新的永久 API key”。
 
-## 5. `codex relay` 和 `openai relay` 的差异
+## 5. `relay` 转发到上游时，请求头默认怎么处理
+
+这部分只讨论 HTTP header 的默认行为，不讨论 request body 的协议转换。
+
+最准确的结论是：
+
+> 即使上下游都是相同协议，例如都使用 OpenAI 风格接口，relay 默认也不会把下游请求头整体原样透传到上游；它会重新构造一个新的上游请求，只复制少量必要头，再按渠道规则补鉴权和 provider 专用头。
+
+相关代码主要在：
+
+- `relay/channel/api_request.go`
+- `relay/channel/openai/adaptor.go`
+- `relay/channel/claude/adaptor.go`
+- `relay/channel/deepseek/adaptor.go`
+
+### 5.1 默认会直接从下游复制到上游的头
+
+在通用 HTTP 场景下，默认会从客户端请求头取值并写入上游请求的主要是：
+
+- `Content-Type`
+- `Accept`
+
+如果当前请求是流式响应，且客户端没有传 `Accept`，项目会补成：
+
+- `Accept: text/event-stream`
+
+也就是说，默认真正“原样取自下游”的通用头非常少，主要就是内容协商相关头。
+
+### 5.2 某些 adaptor 会显式挑选少量客户端头继续带上去
+
+这不是“全量透传”，而是各个 adaptor 有选择地复制个别头。
+
+典型例子：
+
+- Claude adaptor
+  - `anthropic-version`
+  - `anthropic-beta`
+
+其中：
+
+- `anthropic-version` 如果客户端未传，会默认补成 `2023-06-01`
+- `anthropic-beta` 只有客户端带了，才会继续写到上游
+
+OpenAI Realtime 场景也会参考客户端的：
+
+- `Sec-WebSocket-Protocol`
+
+但这里也不是原样转发，而是把它当成分支条件，再重新拼接上游子协议内容。
+
+### 5.3 默认不会沿用客户端值，而是由 relay 重新构建的头
+
+最典型的是鉴权相关头。
+
+它们默认不会直接转发客户端值，而是根据当前命中的 channel 配置重建：
+
+- `Authorization`
+- `x-api-key`
+- `api-key`
+- `x-goog-api-key`
+
+常见模式有：
+
+- OpenAI / DeepSeek / 兼容 OpenAI：`Authorization: Bearer <channel api key>`
+- Azure OpenAI：`api-key: <channel api key>`
+- Claude：`x-api-key: <channel api key>`
+
+除此之外，以下头也不是按客户端原值透传，而是由上游请求构建逻辑决定：
+
+- `Content-Length`
+- `Connection`
+- `Keep-Alive`
+- `Proxy-Authenticate`
+- `Proxy-Authorization`
+- `TE`
+- `Trailer`
+- `Transfer-Encoding`
+- `Upgrade`
+
+其中 `Content-Length` 会基于新的上游 body 大小重新计算。
+
+### 5.4 默认不会通过通配 / 正则 passthrough 复制的头
+
+即使开启了 header passthrough 规则，项目仍然会刻意跳过一批头，避免把不安全或无意义的客户端头直接带到上游。
+
+包括：
+
+- `connection`
+- `keep-alive`
+- `proxy-authenticate`
+- `proxy-authorization`
+- `te`
+- `trailer`
+- `transfer-encoding`
+- `upgrade`
+- `cookie`
+- `host`
+- `content-length`
+- `accept-encoding`
+- `authorization`
+- `x-api-key`
+- `x-goog-api-key`
+- `sec-websocket-key`
+- `sec-websocket-version`
+- `sec-websocket-extensions`
+
+这里要特别注意：
+
+- `authorization`
+- `x-api-key`
+- `x-goog-api-key`
+
+之所以被显式排除，是为了避免把客户端自己携带的凭证直接泄露给上游 provider。
+
+### 5.5 默认由 relay / adaptor 额外补上的头
+
+有些头不是来自下游，而是由当前渠道配置或 adaptor 逻辑补上的。
+
+典型例子：
+
+- OpenAI 渠道的 `OpenAI-Organization`
+- OpenRouter 渠道的
+  - `HTTP-Referer`
+  - `X-OpenRouter-Title`
+- OpenAI Realtime 的
+  - `openai-beta: realtime=v1`
+  - 或重新构造后的 `Sec-WebSocket-Protocol`
+
+所以一个上游请求的最终 header，通常是三部分叠加：
+
+```text
+少量从客户端复制的头
+  + relay / adaptor 重建的鉴权和 provider 头
+  + 可选的 header override / passthrough 结果
+```
+
+### 5.6 开启 Header Override / Header Passthrough 后会发生什么
+
+如果渠道配置了 Header Override，relay 会在默认 header 构造之后，再应用一层 override / passthrough。
+
+支持的能力包括：
+
+- 显式设置某个头
+- `*`：尝试透传所有客户端头
+- `re:<regex>` / `regex:<regex>`：按名称正则透传
+- `{client_header:<name>}`：把某个客户端头值插入到目标头中
+- `{api_key}`：把当前 channel 的 api key 插入目标头中
+
+但即使开启了 passthrough，也仍然会受上面那份“跳过名单”限制，所以它不是“真正无脑全量 header 透传”。
+
+### 5.7 一句话总结
+
+如果只保留最关键的一句，可以这样记：
+
+> relay 默认只复制很少的内容协商类头，例如 `Content-Type` 和 `Accept`；鉴权头、长度头、连接控制头以及大多数其他头都不会简单沿用客户端值，而是由 relay / adaptor 重新构建，只有在显式开启 override / passthrough 时，才会额外复制部分客户端头。
+
+## 6. `codex relay` 和 `openai relay` 的差异
 
 如果只看网关入口，`codex` 和 `openai` 都可以从统一的 `/v1/*` 路由进入，因此表面上都像“OpenAI 风格接口”。
 
@@ -514,7 +718,7 @@ OpenAI 风格客户端入口
   + Responses-only 能力面
 ```
 
-## 6. 一页结论
+## 7. 一页结论
 
 如果只保留最关键的信息，这篇调研可以压缩成下面 5 条：
 

@@ -148,6 +148,70 @@
 
 也就是说，支付系统不是简单地“传入 100 就收 100”，而是会经过平台自己的价格映射。
 
+### 充值金额如何变成 quota
+
+钱包充值最终落账到 `users.quota` 时，核心锚点是：
+
+```text
+1 USD = QuotaPerUnit quota
+```
+
+默认代码里：
+
+```text
+QuotaPerUnit = 500 * 1000.0 = 500000
+```
+
+也就是默认：
+
+```text
+1 USD = 500,000 quota
+10 USD = 5,000,000 quota
+quota / 500,000 = 等价 USD
+```
+
+这个系数定义在 `common/constants.go`，同时会通过 `OptionMap["QuotaPerUnit"]` 暴露成可配置项。
+
+需要注意的是，“用户实际支付多少钱”和“充值后加多少 quota”不是同一个步骤：
+
+1. 创建订单时，Controller 会根据展示类型、充值分组倍率、折扣、网关单价算出实际收款金额。
+2. 支付回调成功后，Model 层再根据本地订单里的 `Amount` 或 `Money` 发放 quota。
+
+典型支付金额公式可以概括为：
+
+```text
+支付金额 = 用户输入充值量 * 网关单价 * TopupGroupRatio * AmountDiscount
+```
+
+其中：
+
+- EPay 使用 `operation_setting.Price`
+- Stripe 使用 `StripeUnitPrice`
+- Waffo 使用 `WaffoUnitPrice`
+- Waffo Pancake 使用 `WaffoPancakeUnitPrice`
+- `TopupGroupRatio` 按用户分组取值，缺省为 `1`
+- `AmountDiscount` 是按充值档位配置的折扣，缺省为 `1`
+
+如果 `QuotaDisplayType = TOKENS`，前端传入的是 raw quota/tokens 风格数量，Controller 会先除以 `QuotaPerUnit`，把它归一化成等价 USD 数量，再参与支付金额计算。
+
+各网关入账时有一些差异：
+
+| 网关 | 入账 quota 计算 | 说明 |
+| --- | --- | --- |
+| EPay / 易支付 | `topUp.Amount * QuotaPerUnit` | `Amount` 保存的是归一化后的美元数量；回调不使用回调金额重新算 quota |
+| Stripe | `topUp.Money * QuotaPerUnit` | `Money` 保存按充值分组倍率后的购买美元数；`StripeUnitPrice` 只影响实际收款 |
+| Waffo | `topUp.Amount * QuotaPerUnit` | TOKENS 展示模式下创建订单前会先归一化 `Amount`，避免重复放大 |
+| Waffo Pancake | `topUp.Amount * QuotaPerUnit` | 同样按本地订单 `Amount` 发放 quota |
+| Creem | `topUp.Amount` | Creem 充值走商品列表模式，商品里的 `quota` 直接作为发放额度 |
+
+所以最稳妥的理解是：
+
+```text
+QuotaPerUnit 是平台内部“美元 -> quota”的统一基准；
+网关单价、用户分组和折扣决定用户为这笔 quota 实际付多少钱；
+回调成功后以本地订单记录为准发放额度，而不是信任前端或回调金额重新推导。
+```
+
 ## 支持的支付方式总览
 
 按当前代码，项目支持这些支付手段：
@@ -302,7 +366,7 @@ Stripe 支持：
 
 ```text
 前端提交 amount
-  -> new-api 计算实际应付金额
+  -> new-api 计算展示用应付金额
   -> 创建本地 top_up pending 订单
   -> 创建 Stripe Checkout Session（mode=payment）
   -> 前端打开 pay_link
@@ -348,13 +412,44 @@ Stripe 回调里明确处理了：
 
 ### 4. 充值金额和套餐价格来源不同
 
-- 充值：本地按额度、倍率、折扣计算
+- 充值：本地会先算一份报价金额，但真正 Stripe Checkout 金额取决于 `stripe_price_id`
 - 订阅：直接使用套餐绑定的 `stripe_price_id`
 
 也就是说：
 
-- 充值是平台自己定价后去 Stripe 收钱
+- 充值并不是把本地算出来的报价金额直接传给 Stripe，而是：
+  - Checkout Session 使用 `Price = StripePriceId`
+  - `Quantity = amount`
+  - 用户实际支付金额 = Stripe 后台这个 Price 的单价 × `amount`
+- `/api/user/stripe/amount` 返回的报价金额来自：
+  - `amount * StripeUnitPrice * topupGroupRatio * discount`
+- 本地充值订单 `top_ups.money` 当前保存的是：
+  - `amount * topupGroupRatio`
+- 充值成功后发放 quota 时，又是按：
+  - `topUp.Money * QuotaPerUnit`
 - 订阅是平台先在 Stripe 里预建价格，再按价格 ID 拉起购买
+
+这意味着当前 Stripe 充值链路里，至少存在三个容易混淆的金额概念：
+
+| 概念 | 来源 | 当前作用 |
+| --- | --- | --- |
+| 展示报价 `payMoney` | `amount * StripeUnitPrice * topupGroupRatio * discount` | `/api/user/stripe/amount` 返回给前端看的报价 |
+| 本地订单 `Money` | `amount * topupGroupRatio` | webhook 成功后用于 `Recharge(...)` 折算 quota |
+| Stripe 实际收款 | `StripePriceId` 单价 × `Quantity(amount)` | 用户在 Stripe Checkout 中真实支付的金额 |
+
+换句话说，当前实现里：
+
+- `StripeUnitPrice` 影响报价展示
+- `StripePriceId` 决定 Stripe 真正收多少钱
+- `topUp.Money` 决定最终给用户发多少 quota
+
+如果这三个值没有被运营配置成一致，就可能出现：
+
+- 前端展示金额和 Stripe 收银台金额不一致
+- Stripe 实际收款金额和本地发放 quota 的价值不一致
+- 平台净收入和系统内部记账价值不一致
+
+另外，Stripe webhook 虽然会记录 `amount_total` 和 `currency`，但当前充值发放逻辑并不会依据 webhook 返回的实际收款金额重新计算 quota，而是继续信任本地订单里的 `Money`。
 
 ### 更适合什么场景
 
